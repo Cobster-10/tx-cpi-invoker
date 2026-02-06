@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "StorkProof",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "publicKey": {
+      "type": "string",
+      "description": "Signer public key (base58), if surfaced by the upstream API"
+    },
+    "message": {
+      "type": "string",
+      "description": "Signed message bytes (base64)"
+    },
+    "signature": {
+      "type": "string",
+      "description": "Ed25519 signature over message (base64)"
+    },
+    "parsed": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "conditionId": {
+          "type": "string",
+          "description": "Condition identifier (external string or 32-byte id encoded by adapter)"
+        },
+        "outcome": {
+          "type": "string",
+          "description": "Outcome/value encoded by adapter"
+        },
+        "timestampUnix": {
+          "type": "integer",
+          "description": "Unix timestamp asserted by oracle"
+        }
+      },
+      "required": ["conditionId", "outcome", "timestampUnix"]
+    }
+  },
+  "required": ["message", "signature"]
+}

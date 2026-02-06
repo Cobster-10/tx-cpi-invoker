@@ -32,6 +32,10 @@ Open [http://localhost:3000](http://localhost:3000), connect your wallet, and in
 | Program Client | Codama-generated, `@solana/kit`         |
 | Program        | Anchor (Rust)                           |
 
+## Engineering Constitution
+
+This project follows a constitution focused on code quality, testing standards, UX consistency, performance/scalability, security, and cross-component harmony. All changes should conform to the principles defined in [.specify/memory/constitution.md](.specify/memory/constitution.md).
+
 ## Project Structure
 
 ```

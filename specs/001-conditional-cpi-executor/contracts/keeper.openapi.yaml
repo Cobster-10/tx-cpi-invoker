@@ -1,0 +1,178 @@
+openapi: 3.1.0
+info:
+  title: tx-cpi-invoker Keeper API
+  version: 0.1.0
+  description: |
+    Minimal REST interface for operating a Trustless Keeper.
+
+    Note: The on-chain program is the source of truth. This API is optional and primarily
+    for operational visibility and triggering execution jobs.
+servers:
+  - url: http://localhost:8787
+paths:
+  /health:
+    get:
+      summary: Health check
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                required: [ok]
+
+  /requirements:
+    get:
+      summary: List tracked requirements
+      parameters:
+        - name: state
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [active, executed, canceled]
+      responses:
+        '200':
+          description: List of requirements
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RequirementSummary'
+
+  /requirements/{requirementPubkey}:
+    get:
+      summary: Get a requirement
+      parameters:
+        - name: requirementPubkey
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Requirement
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Requirement'
+        '404':
+          description: Not found
+
+  /execute:
+    post:
+      summary: Trigger execution attempt for a requirement
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExecuteRequest'
+      responses:
+        '200':
+          description: Execution submitted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecuteResponse'
+        '400':
+          description: Invalid request
+
+components:
+  schemas:
+    RequirementState:
+      type: string
+      enum: [active, executed, canceled]
+
+    RequirementSummary:
+      type: object
+      properties:
+        requirementPubkey:
+          type: string
+        authority:
+          type: string
+        state:
+          $ref: '#/components/schemas/RequirementState'
+        conditionCount:
+          type: integer
+          minimum: 0
+      required: [requirementPubkey, authority, state, conditionCount]
+
+    Requirement:
+      type: object
+      properties:
+        requirementPubkey:
+          type: string
+        authority:
+          type: string
+        state:
+          $ref: '#/components/schemas/RequirementState'
+        targetProgram:
+          type: string
+        maxKeeperFeeLamports:
+          type: string
+          description: u64 as string
+        maxProofAgeSecs:
+          type: integer
+        conditions:
+          type: array
+          items:
+            $ref: '#/components/schemas/Condition'
+      required: [requirementPubkey, authority, state, targetProgram, maxKeeperFeeLamports, maxProofAgeSecs, conditions]
+
+    Condition:
+      type: object
+      properties:
+        conditionId:
+          type: string
+          description: 32-byte id encoded as base58/base64/hex by the server
+        expectedOutcome:
+          type: string
+          description: outcome encoded as base64/hex by the server
+      required: [conditionId, expectedOutcome]
+
+    StorkProof:
+      type: object
+      properties:
+        message:
+          type: string
+          description: base64
+        signature:
+          type: string
+          description: base64
+      required: [message, signature]
+
+    ExecuteRequest:
+      type: object
+      properties:
+        requirementPubkey:
+          type: string
+        proofs:
+          type: array
+          items:
+            $ref: '#/components/schemas/StorkProof'
+        useDurableNonce:
+          type: boolean
+          default: false
+        nonceAccountPubkey:
+          type: string
+          nullable: true
+      required: [requirementPubkey, proofs]
+
+    ExecuteResponse:
+      type: object
+      properties:
+        submitted:
+          type: boolean
+        signature:
+          type: string
+          nullable: true
+        error:
+          type: string
+          nullable: true
+      required: [submitted]
