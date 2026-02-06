@@ -1,5 +1,6 @@
 use anchor_lang::prelude::*;
 use anchor_lang::system_program::{transfer, Transfer};
+use solana_program::instruction::{AccountMeta, Instruction};
 
 #[cfg(test)]
 mod tests;
@@ -15,6 +16,7 @@ pub mod vault {
         order_id: u64,
         input_amount: u64,
         trigger: Trigger,
+        action: CpiAction,
         expires_slot: Option<u64>,
         execution_bounty: u64,
     ) -> Result<()> {
@@ -22,6 +24,16 @@ pub mod vault {
         require!(
             execution_bounty < input_amount,
             OrderError::BountyExceedsAmount
+        );
+
+        require!(
+            is_whitelisted_program(action.program_id),
+            OrderError::ProgramNotWhitelisted
+        );
+
+        require!(
+            action.accounts.len() <= 32,
+            OrderError::TooManyAccounts
         );
 
         let clock = Clock::get()?;
@@ -36,14 +48,13 @@ pub mod vault {
         order.order_id = order_id;
         order.input_amount = input_amount;
         order.trigger = trigger;
+        order.action = action;
         order.created_slot = current_slot;
         order.expires_slot = expires_slot;
         order.executed = false;
         order.canceled = false;
         order.execution_bounty = execution_bounty;
 
-        // Transfer SOL to escrow (Order PDA)
-        // Note: Anchor's init already pays rent, so we transfer the full input_amount
         transfer(
             CpiContext::new(
                 ctx.accounts.system_program.to_account_info(),
@@ -69,12 +80,10 @@ pub mod vault {
             OrderError::Unauthorized
         );
 
-        // Check expiration
         if let Some(expires) = order.expires_slot {
             require!(clock.slot <= expires, OrderError::OrderExpired);
         }
 
-        // Evaluate trigger condition
         let trigger_met = match &order.trigger {
             Trigger::TimeAfter { slot } => clock.slot >= *slot,
             Trigger::PdaValueEquals { account, expected_value } => {
@@ -91,7 +100,6 @@ pub mod vault {
                 if account_data.len() < 8 {
                     return Err(OrderError::InvalidPdaAccount.into());
                 }
-                // Read first 8 bytes as u64 (assuming little-endian)
                 let value = u64::from_le_bytes(
                     account_data[0..8]
                         .try_into()
@@ -100,10 +108,6 @@ pub mod vault {
                 value == *expected_value
             }
             Trigger::PriceBelow { oracle, price } => {
-                // Placeholder for oracle integration
-                // In production, this would read from Pyth/Switchboard oracle
-                // For now, we'll require the oracle account to be provided
-                // and read a simple u64 price value
                 let oracle_account = ctx
                     .accounts
                     .oracle_account
@@ -128,30 +132,71 @@ pub mod vault {
 
         require!(trigger_met, OrderError::TriggerConditionNotMet);
 
-        // Calculate amounts
-        let execution_amount = order
-            .input_amount
-            .checked_sub(order.execution_bounty)
-            .ok_or(OrderError::InvalidAmount)?;
-
-        // Verify Order PDA has sufficient funds (input_amount + rent)
-        let order_lamports = ctx.accounts.order.to_account_info().lamports();
         require!(
-            order_lamports >= order.input_amount,
-            OrderError::InsufficientEscrowBalance
+            is_whitelisted_program(order.action.program_id),
+            OrderError::ProgramNotWhitelisted
         );
 
-        // Pay execution bounty to keeper (executor)
+        require!(
+            ctx.remaining_accounts.len() >= order.action.accounts.len(),
+            OrderError::InsufficientAccounts
+        );
+
+        let order_pda = ctx.accounts.order.key();
+        let order_seeds: &[&[&[u8]]] = &[&[
+            b"order",
+            order.user.as_ref(),
+            &order.order_id.to_le_bytes(),
+            &[ctx.bumps.order],
+        ]];
+
+        for (i, expected_account) in order.action.accounts.iter().enumerate() {
+            let provided_account = &ctx.remaining_accounts[i];
+
+            require!(
+                provided_account.key() == expected_account.pubkey,
+                OrderError::AccountMismatch
+            );
+
+            require!(
+                !expected_account.is_writable || provided_account.is_writable,
+                OrderError::WritableEscalation
+            );
+
+            if expected_account.is_writable {
+                validate_pda_authority(provided_account, &order_pda)?;
+            }
+        }
+
+        let instruction = Instruction {
+            program_id: order.action.program_id,
+            accounts: order.action.accounts.iter().map(|a| {
+                AccountMeta {
+                    pubkey: a.pubkey,
+                    is_writable: a.is_writable,
+                    is_signer: false,
+                }
+            }).collect(),
+            data: order.action.data.clone(),
+        };
+
+        let account_infos: Vec<AccountInfo> = ctx.remaining_accounts
+            .iter()
+            .take(order.action.accounts.len())
+            .cloned()
+            .collect();
+
+        anchor_lang::solana_program::program::invoke_signed(
+            &instruction,
+            &account_infos.iter().collect::<Vec<_>>(),
+            &[order_seeds],
+        )?;
+
         if order.execution_bounty > 0 {
             **ctx.accounts.keeper.try_borrow_mut_lamports()? += order.execution_bounty;
             **ctx.accounts.order.try_borrow_mut_lamports()? -= order.execution_bounty;
         }
 
-        // Transfer remaining funds to user (or could be CPI to DEX in future)
-        **ctx.accounts.user.try_borrow_mut_lamports()? += execution_amount;
-        **ctx.accounts.order.try_borrow_mut_lamports()? -= execution_amount;
-
-        // Mark as executed
         let order_mut = &mut ctx.accounts.order;
         order_mut.executed = true;
 
@@ -169,7 +214,6 @@ pub mod vault {
         );
         require!(order.order_id == order_id, OrderError::InvalidOrderId);
 
-        // Refund all escrowed funds to user
         let refund_amount = ctx.accounts.order.lamports();
         require!(refund_amount > 0, OrderError::InsufficientEscrowBalance);
 
@@ -192,7 +236,6 @@ pub mod vault {
             refund_amount,
         )?;
 
-        // Mark as canceled
         let order_mut = &mut ctx.accounts.order;
         order_mut.canceled = true;
 
@@ -212,8 +255,6 @@ pub mod vault {
         );
         require!(order.order_id == order_id, OrderError::InvalidOrderId);
 
-        // Close account and reclaim rent
-        // Remaining lamports (if any) go to user
         let remaining_lamports = ctx.accounts.order.lamports();
         if remaining_lamports > 0 {
             let order_seeds: &[&[&[u8]]] = &[&[
@@ -240,11 +281,54 @@ pub mod vault {
     }
 }
 
+fn is_whitelisted_program(program_id: Pubkey) -> bool {
+    matches!(
+        program_id,
+        anchor_lang::system_program::ID
+            | anchor_spl::token::ID
+            | anchor_spl::associated_token::ID
+    )
+}
+
+fn validate_pda_authority(account: &AccountInfo, order_pda: &Pubkey) -> Result<()> {
+    if account.owner == &anchor_spl::token::ID {
+        let account_data = account.try_borrow_data()?;
+        if account_data.len() >= 64 {
+            let authority = Pubkey::try_from(&account_data[32..64])
+                .map_err(|_| OrderError::InvalidAccountAuthority)?;
+            require!(
+                authority == *order_pda,
+                OrderError::InvalidAccountAuthority
+            );
+        }
+    } else if account.owner == &anchor_lang::system_program::ID {
+        require!(
+            account.key() == *order_pda,
+            OrderError::InvalidAccountAuthority
+        );
+    }
+
+    Ok(())
+}
+
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq)]
 pub enum Trigger {
     TimeAfter { slot: u64 },
     PdaValueEquals { account: Pubkey, expected_value: u64 },
     PriceBelow { oracle: Pubkey, price: u64 },
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct CpiAction {
+    pub program_id: Pubkey,
+    pub accounts: Vec<CpiAccount>,
+    pub data: Vec<u8>,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct CpiAccount {
+    pub pubkey: Pubkey,
+    pub is_writable: bool,
 }
 
 #[account]
@@ -253,6 +337,7 @@ pub struct Order {
     pub order_id: u64,
     pub input_amount: u64,
     pub trigger: Trigger,
+    pub action: CpiAction,
     pub created_slot: u64,
     pub expires_slot: Option<u64>,
     pub executed: bool,
@@ -261,16 +346,19 @@ pub struct Order {
 }
 
 impl Order {
-    pub const LEN: usize = 8 + // discriminator
-        32 + // user
-        8 + // order_id
-        8 + // input_amount
-        1 + 8 + // trigger variant + data (max size for PriceBelow)
-        8 + // created_slot
-        1 + 8 + // expires_slot (Option<u64>)
-        1 + // executed
-        1 + // canceled
-        8; // execution_bounty
+    pub const LEN: usize = 8
+        + 32
+        + 8
+        + 8
+        + (1 + 4 + 32 + 8)
+        + 32
+        + 4 + (32 + 1) * 32
+        + 4 + 512
+        + 8
+        + 1 + 8
+        + 1
+        + 1
+        + 8;
 }
 
 #[derive(Accounts)]
@@ -293,15 +381,11 @@ pub struct CreateOrder<'info> {
 pub struct ExecuteOrder<'info> {
     #[account(mut)]
     pub order: Account<'info, Order>,
-    /// CHECK: User account that will receive the execution amount
     #[account(mut)]
     pub user: AccountInfo<'info>,
-    /// CHECK: Keeper account that will receive the bounty
     #[account(mut)]
     pub keeper: Signer<'info>,
-    /// CHECK: PDA account for PdaValueEquals trigger (optional)
     pub pda_account: Option<AccountInfo<'info>>,
-    /// CHECK: Oracle account for PriceBelow trigger (optional)
     pub oracle_account: Option<AccountInfo<'info>>,
     pub system_program: Program<'info, System>,
 }
@@ -364,4 +448,16 @@ pub enum OrderError {
     BountyExceedsAmount,
     #[msg("Invalid order ID")]
     InvalidOrderId,
+    #[msg("Program not whitelisted")]
+    ProgramNotWhitelisted,
+    #[msg("Too many accounts")]
+    TooManyAccounts,
+    #[msg("Insufficient accounts provided")]
+    InsufficientAccounts,
+    #[msg("Account mismatch")]
+    AccountMismatch,
+    #[msg("Writable escalation not allowed")]
+    WritableEscalation,
+    #[msg("Invalid account authority")]
+    InvalidAccountAuthority,
 }
