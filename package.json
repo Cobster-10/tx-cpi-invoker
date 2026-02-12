@@ -9,6 +9,8 @@
     "dev": "next dev",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "keeper:build": "npm --prefix services/keeper run build",
+    "keeper:dev": "npm --prefix services/keeper run dev",
     "lint": "eslint",
     "setup": "npm run anchor-build && npm run codama:js",
     "start": "next start"
