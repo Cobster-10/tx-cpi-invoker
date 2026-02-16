@@ -50,3 +50,6 @@ next-env.d.ts
 
 # build artifacts
 /services/keeper/dist
+
+# skills
+.agents
