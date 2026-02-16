@@ -3,6 +3,11 @@ mod tests {
     use crate::{CpiAction, Order, Trigger, UserOrderCounter, ID as PROGRAM_ID};
 
     use anchor_lang::{AccountDeserialize, AnchorSerialize};
+    use anchor_spl::token::spl_token::{
+        instruction as token_instruction,
+        solana_program::program_pack::Pack,
+        state::{Account as SplTokenAccount, Mint},
+    };
 
     use litesvm::LiteSVM;
     use sha2::{Digest, Sha256};
@@ -155,6 +160,105 @@ mod tests {
             ],
             data,
         }
+    }
+
+    fn create_and_init_token_accounts(
+        svm: &mut LiteSVM,
+        payer: &Keypair,
+        source_owner: &Pubkey,
+        destination_owner: &Pubkey,
+        mint_authority: &Keypair,
+        initial_source_amount: u64,
+    ) -> (Pubkey, Pubkey, Pubkey) {
+        let mint = Keypair::new();
+        let source = Keypair::new();
+        let destination = Keypair::new();
+
+        let mint_rent = svm.minimum_balance_for_rent_exemption(Mint::LEN);
+        let token_rent = svm.minimum_balance_for_rent_exemption(SplTokenAccount::LEN);
+
+        let create_mint_ix = system_instruction::create_account(
+            &payer.pubkey(),
+            &mint.pubkey(),
+            mint_rent,
+            Mint::LEN as u64,
+            &anchor_spl::token::ID,
+        );
+        let init_mint_ix = token_instruction::initialize_mint2(
+            &anchor_spl::token::ID,
+            &mint.pubkey(),
+            &mint_authority.pubkey(),
+            None,
+            0,
+        )
+        .expect("init mint ix");
+
+        let create_source_ix = system_instruction::create_account(
+            &payer.pubkey(),
+            &source.pubkey(),
+            token_rent,
+            SplTokenAccount::LEN as u64,
+            &anchor_spl::token::ID,
+        );
+        let init_source_ix = token_instruction::initialize_account3(
+            &anchor_spl::token::ID,
+            &source.pubkey(),
+            &mint.pubkey(),
+            source_owner,
+        )
+        .expect("init source token account ix");
+
+        let create_destination_ix = system_instruction::create_account(
+            &payer.pubkey(),
+            &destination.pubkey(),
+            token_rent,
+            SplTokenAccount::LEN as u64,
+            &anchor_spl::token::ID,
+        );
+        let init_destination_ix = token_instruction::initialize_account3(
+            &anchor_spl::token::ID,
+            &destination.pubkey(),
+            &mint.pubkey(),
+            destination_owner,
+        )
+        .expect("init destination token account ix");
+
+        let mint_to_ix = token_instruction::mint_to(
+            &anchor_spl::token::ID,
+            &mint.pubkey(),
+            &source.pubkey(),
+            &mint_authority.pubkey(),
+            &[],
+            initial_source_amount,
+        )
+        .expect("mint_to ix");
+
+        let tx = Transaction::new_signed_with_payer(
+            &[
+                create_mint_ix,
+                init_mint_ix,
+                create_source_ix,
+                init_source_ix,
+                create_destination_ix,
+                init_destination_ix,
+                mint_to_ix,
+            ],
+            Some(&payer.pubkey()),
+            &[payer, &mint, &source, &destination, mint_authority],
+            svm.latest_blockhash(),
+        );
+        svm.send_transaction(tx)
+            .expect("token account/mint setup should succeed");
+
+        (mint.pubkey(), source.pubkey(), destination.pubkey())
+    }
+
+    fn token_amount(svm: &LiteSVM, token_account: &Pubkey) -> u64 {
+        let account = svm
+            .get_account(token_account)
+            .expect("token account missing in svm");
+        let parsed = SplTokenAccount::unpack(&account.data).expect("unpack token account");
+        parsed.amount
     }
 
     #[test]
@@ -529,5 +633,569 @@ mod tests {
         let mut counter_data = counter_acc.data.as_slice();
         let counter = UserOrderCounter::try_deserialize(&mut counter_data).unwrap();
         assert_eq!(counter.open_order_count, 0, "open order count must decrement");
+    }
+
+    #[test]
+    fn test_execute_order_before_trigger_fails() {
+        let mut svm = LiteSVM::new();
+        let program_bytes = include_bytes!("../../../target/deploy/order_executor.so");
+        svm.add_program(PROGRAM_ID, program_bytes)
+            .expect("load order_executor program");
+
+        let user = Keypair::new();
+        let keeper = Keypair::new();
+        let recipient = Keypair::new();
+        svm.airdrop(&user.pubkey(), 10 * LAMPORTS_PER_SOL).unwrap();
+        svm.airdrop(&keeper.pubkey(), LAMPORTS_PER_SOL).unwrap();
+
+        let (order_counter_pda, _) = get_order_counter_pda(&user.pubkey());
+        let (order_pda, _) = get_order_pda(&user.pubkey(), 0);
+        let (vault_pda, _) = get_vault_pda(&user.pubkey(), 0);
+
+        let transfer_ix = system_instruction::transfer(&vault_pda, &recipient.pubkey(), 1_000_000);
+        let action = CpiAction {
+            program_id: system_program::ID,
+            accounts: vec![
+                crate::CpiAccount {
+                    pubkey: vault_pda,
+                    is_writable: true,
+                },
+                crate::CpiAccount {
+                    pubkey: recipient.pubkey(),
+                    is_writable: true,
+                },
+            ],
+            data: transfer_ix.data,
+        };
+
+        let init_ix = init_user_counter_ix(&user.pubkey(), &order_counter_pda);
+        let init_tx = Transaction::new_signed_with_payer(
+            &[init_ix],
+            Some(&user.pubkey()),
+            &[&user],
+            svm.latest_blockhash(),
+        );
+        svm.send_transaction(init_tx)
+            .expect("init_user_counter should succeed");
+
+        let create_ix = create_order_ix(
+            &user.pubkey(),
+            &order_counter_pda,
+            &order_pda,
+            &vault_pda,
+            200_000_000,
+            Trigger::TimeAfter { slot: u64::MAX },
+            action,
+            None,
+            0,
+        );
+        let create_tx = Transaction::new_signed_with_payer(
+            &[create_ix],
+            Some(&user.pubkey()),
+            &[&user],
+            svm.latest_blockhash(),
+        );
+        svm.send_transaction(create_tx)
+            .expect("create_order should succeed");
+
+        let execute_ix = execute_order_if_ready_ix(
+            &order_pda,
+            &vault_pda,
+            &user.pubkey(),
+            &keeper.pubkey(),
+            &order_pda,
+            vec![
+                AccountMeta::new(vault_pda, false),
+                AccountMeta::new(recipient.pubkey(), false),
+                AccountMeta::new_readonly(system_program::ID, false),
+            ],
+        );
+        let execute_tx = Transaction::new_signed_with_payer(
+            &[execute_ix],
+            Some(&user.pubkey()),
+            &[&user, &keeper],
+            svm.latest_blockhash(),
+        );
+        let execute_res = svm.send_transaction(execute_tx);
+        assert!(
+            execute_res.is_err(),
+            "execute_order_if_ready must fail before trigger slot"
+        );
+    }
+
+    #[test]
+    fn test_execute_order_missing_target_program_account_fails() {
+        let mut svm = LiteSVM::new();
+        let program_bytes = include_bytes!("../../../target/deploy/order_executor.so");
+        svm.add_program(PROGRAM_ID, program_bytes)
+            .expect("load order_executor program");
+
+        let user = Keypair::new();
+        let keeper = Keypair::new();
+        let recipient = Keypair::new();
+        svm.airdrop(&user.pubkey(), 10 * LAMPORTS_PER_SOL).unwrap();
+        svm.airdrop(&keeper.pubkey(), LAMPORTS_PER_SOL).unwrap();
+
+        let (order_counter_pda, _) = get_order_counter_pda(&user.pubkey());
+        let (order_pda, _) = get_order_pda(&user.pubkey(), 0);
+        let (vault_pda, _) = get_vault_pda(&user.pubkey(), 0);
+
+        let transfer_ix = system_instruction::transfer(&vault_pda, &recipient.pubkey(), 1_000_000);
+        let action = CpiAction {
+            program_id: system_program::ID,
+            accounts: vec![
+                crate::CpiAccount {
+                    pubkey: vault_pda,
+                    is_writable: true,
+                },
+                crate::CpiAccount {
+                    pubkey: recipient.pubkey(),
+                    is_writable: true,
+                },
+            ],
+            data: transfer_ix.data,
+        };
+
+        let init_ix = init_user_counter_ix(&user.pubkey(), &order_counter_pda);
+        let init_tx = Transaction::new_signed_with_payer(
+            &[init_ix],
+            Some(&user.pubkey()),
+            &[&user],
+            svm.latest_blockhash(),
+        );
+        svm.send_transaction(init_tx)
+            .expect("init_user_counter should succeed");
+
+        let create_ix = create_order_ix(
+            &user.pubkey(),
+            &order_counter_pda,
+            &order_pda,
+            &vault_pda,
+            200_000_000,
+            Trigger::TimeAfter { slot: 0 },
+            action,
+            None,
+            0,
+        );
+        let create_tx = Transaction::new_signed_with_payer(
+            &[create_ix],
+            Some(&user.pubkey()),
+            &[&user],
+            svm.latest_blockhash(),
+        );
+        svm.send_transaction(create_tx)
+            .expect("create_order should succeed");
+
+        // Missing system_program here: only action.accounts are passed.
+        let execute_ix = execute_order_if_ready_ix(
+            &order_pda,
+            &vault_pda,
+            &user.pubkey(),
+            &keeper.pubkey(),
+            &order_pda,
+            vec![
+                AccountMeta::new(vault_pda, false),
+                AccountMeta::new(recipient.pubkey(), false),
+            ],
+        );
+        let execute_tx = Transaction::new_signed_with_payer(
+            &[execute_ix],
+            Some(&user.pubkey()),
+            &[&user, &keeper],
+            svm.latest_blockhash(),
+        );
+        let execute_res = svm.send_transaction(execute_tx);
+        assert!(
+            execute_res.is_err(),
+            "execute_order_if_ready must fail when target program AccountInfo is missing"
+        );
+    }
+
+    #[test]
+    fn test_execute_order_with_wrong_cpi_account_fails() {
+        let mut svm = LiteSVM::new();
+        let program_bytes = include_bytes!("../../../target/deploy/order_executor.so");
+        svm.add_program(PROGRAM_ID, program_bytes)
+            .expect("load order_executor program");
+
+        let user = Keypair::new();
+        let keeper = Keypair::new();
+        let recipient = Keypair::new();
+        let wrong_recipient = Keypair::new();
+        svm.airdrop(&user.pubkey(), 10 * LAMPORTS_PER_SOL).unwrap();
+        svm.airdrop(&keeper.pubkey(), LAMPORTS_PER_SOL).unwrap();
+
+        let (order_counter_pda, _) = get_order_counter_pda(&user.pubkey());
+        let (order_pda, _) = get_order_pda(&user.pubkey(), 0);
+        let (vault_pda, _) = get_vault_pda(&user.pubkey(), 0);
+
+        let transfer_ix = system_instruction::transfer(&vault_pda, &recipient.pubkey(), 1_000_000);
+        let action = CpiAction {
+            program_id: system_program::ID,
+            accounts: vec![
+                crate::CpiAccount {
+                    pubkey: vault_pda,
+                    is_writable: true,
+                },
+                crate::CpiAccount {
+                    pubkey: recipient.pubkey(),
+                    is_writable: true,
+                },
+            ],
+            data: transfer_ix.data,
+        };
+
+        let init_ix = init_user_counter_ix(&user.pubkey(), &order_counter_pda);
+        let init_tx = Transaction::new_signed_with_payer(
+            &[init_ix],
+            Some(&user.pubkey()),
+            &[&user],
+            svm.latest_blockhash(),
+        );
+        svm.send_transaction(init_tx)
+            .expect("init_user_counter should succeed");
+
+        let create_ix = create_order_ix(
+            &user.pubkey(),
+            &order_counter_pda,
+            &order_pda,
+            &vault_pda,
+            200_000_000,
+            Trigger::TimeAfter { slot: 0 },
+            action,
+            None,
+            0,
+        );
+        let create_tx = Transaction::new_signed_with_payer(
+            &[create_ix],
+            Some(&user.pubkey()),
+            &[&user],
+            svm.latest_blockhash(),
+        );
+        svm.send_transaction(create_tx)
+            .expect("create_order should succeed");
+
+        // The stored action expects recipient, but we intentionally pass wrong_recipient.
+        let execute_ix = execute_order_if_ready_ix(
+            &order_pda,
+            &vault_pda,
+            &user.pubkey(),
+            &keeper.pubkey(),
+            &order_pda,
+            vec![
+                AccountMeta::new(vault_pda, false),
+                AccountMeta::new(wrong_recipient.pubkey(), false),
+                AccountMeta::new_readonly(system_program::ID, false),
+            ],
+        );
+        let execute_tx = Transaction::new_signed_with_payer(
+            &[execute_ix],
+            Some(&user.pubkey()),
+            &[&user, &keeper],
+            svm.latest_blockhash(),
+        );
+        let execute_res = svm.send_transaction(execute_tx);
+        assert!(
+            execute_res.is_err(),
+            "execute_order_if_ready must fail when remaining_accounts do not match stored action"
+        );
+    }
+
+    #[test]
+    fn test_cancel_order_by_non_owner_fails() {
+        let mut svm = LiteSVM::new();
+        let program_bytes = include_bytes!("../../../target/deploy/order_executor.so");
+        svm.add_program(PROGRAM_ID, program_bytes)
+            .expect("load order_executor program");
+
+        let owner = Keypair::new();
+        let attacker = Keypair::new();
+        svm.airdrop(&owner.pubkey(), 10 * LAMPORTS_PER_SOL).unwrap();
+        svm.airdrop(&attacker.pubkey(), LAMPORTS_PER_SOL).unwrap();
+
+        let (order_counter_pda, _) = get_order_counter_pda(&owner.pubkey());
+        let (order_pda, _) = get_order_pda(&owner.pubkey(), 0);
+        let (vault_pda, _) = get_vault_pda(&owner.pubkey(), 0);
+
+        let init_ix = init_user_counter_ix(&owner.pubkey(), &order_counter_pda);
+        let init_tx = Transaction::new_signed_with_payer(
+            &[init_ix],
+            Some(&owner.pubkey()),
+            &[&owner],
+            svm.latest_blockhash(),
+        );
+        svm.send_transaction(init_tx)
+            .expect("init_user_counter should succeed");
+
+        let create_ix = create_order_ix(
+            &owner.pubkey(),
+            &order_counter_pda,
+            &order_pda,
+            &vault_pda,
+            200_000_000,
+            Trigger::TimeAfter { slot: u64::MAX },
+            CpiAction {
+                program_id: system_program::ID,
+                accounts: vec![],
+                data: vec![],
+            },
+            None,
+            0,
+        );
+        let create_tx = Transaction::new_signed_with_payer(
+            &[create_ix],
+            Some(&owner.pubkey()),
+            &[&owner],
+            svm.latest_blockhash(),
+        );
+        svm.send_transaction(create_tx)
+            .expect("create_order should succeed");
+
+        let cancel_ix = cancel_order_ix(&attacker.pubkey(), &order_pda, &vault_pda, 0);
+        let cancel_tx = Transaction::new_signed_with_payer(
+            &[cancel_ix],
+            Some(&attacker.pubkey()),
+            &[&attacker],
+            svm.latest_blockhash(),
+        );
+        let cancel_res = svm.send_transaction(cancel_tx);
+        assert!(
+            cancel_res.is_err(),
+            "non-owner must not be able to cancel owner order"
+        );
+    }
+
+    #[test]
+    fn test_execute_order_if_ready_token_transfer_from_vault_authority_succeeds() {
+        let mut svm = LiteSVM::new();
+        let program_bytes = include_bytes!("../../../target/deploy/order_executor.so");
+        svm.add_program(PROGRAM_ID, program_bytes)
+            .expect("load order_executor program");
+
+        let user = Keypair::new();
+        let keeper = Keypair::new();
+        let destination_owner = Keypair::new();
+        let mint_authority = Keypair::new();
+
+        svm.airdrop(&user.pubkey(), 10 * LAMPORTS_PER_SOL).unwrap();
+        svm.airdrop(&keeper.pubkey(), LAMPORTS_PER_SOL).unwrap();
+
+        let (order_counter_pda, _) = get_order_counter_pda(&user.pubkey());
+        let (order_pda, _) = get_order_pda(&user.pubkey(), 0);
+        let (vault_pda, _) = get_vault_pda(&user.pubkey(), 0);
+
+        let init_ix = init_user_counter_ix(&user.pubkey(), &order_counter_pda);
+        let init_tx = Transaction::new_signed_with_payer(
+            &[init_ix],
+            Some(&user.pubkey()),
+            &[&user],
+            svm.latest_blockhash(),
+        );
+        svm.send_transaction(init_tx)
+            .expect("init_user_counter should succeed");
+
+        let (_, source_token_account, destination_token_account) = create_and_init_token_accounts(
+            &mut svm,
+            &user,
+            &vault_pda,
+            &destination_owner.pubkey(),
+            &mint_authority,
+            1_000_000,
+        );
+
+        let transfer_amount = 150_000;
+        let transfer_ix = token_instruction::transfer(
+            &anchor_spl::token::ID,
+            &source_token_account,
+            &destination_token_account,
+            &vault_pda,
+            &[],
+            transfer_amount,
+        )
+        .expect("spl token transfer ix");
+
+        let action = CpiAction {
+            program_id: anchor_spl::token::ID,
+            accounts: vec![
+                crate::CpiAccount {
+                    pubkey: source_token_account,
+                    is_writable: true,
+                },
+                crate::CpiAccount {
+                    pubkey: destination_token_account,
+                    is_writable: true,
+                },
+                crate::CpiAccount {
+                    pubkey: vault_pda,
+                    is_writable: false,
+                },
+            ],
+            data: transfer_ix.data,
+        };
+
+        let create_ix = create_order_ix(
+            &user.pubkey(),
+            &order_counter_pda,
+            &order_pda,
+            &vault_pda,
+            100_000_000,
+            Trigger::TimeAfter { slot: 0 },
+            action,
+            None,
+            0,
+        );
+        let create_tx = Transaction::new_signed_with_payer(
+            &[create_ix],
+            Some(&user.pubkey()),
+            &[&user],
+            svm.latest_blockhash(),
+        );
+        svm.send_transaction(create_tx)
+            .expect("create_order should succeed");
+
+        let source_before = token_amount(&svm, &source_token_account);
+        let destination_before = token_amount(&svm, &destination_token_account);
+
+        let execute_ix = execute_order_if_ready_ix(
+            &order_pda,
+            &vault_pda,
+            &user.pubkey(),
+            &keeper.pubkey(),
+            &order_pda,
+            vec![
+                AccountMeta::new(source_token_account, false),
+                AccountMeta::new(destination_token_account, false),
+                AccountMeta::new_readonly(vault_pda, false),
+                AccountMeta::new_readonly(anchor_spl::token::ID, false),
+            ],
+        );
+        let execute_tx = Transaction::new_signed_with_payer(
+            &[execute_ix],
+            Some(&user.pubkey()),
+            &[&user, &keeper],
+            svm.latest_blockhash(),
+        );
+        svm.send_transaction(execute_tx)
+            .expect("execute_order_if_ready should succeed for spl token transfer");
+
+        let source_after = token_amount(&svm, &source_token_account);
+        let destination_after = token_amount(&svm, &destination_token_account);
+        assert_eq!(source_after, source_before - transfer_amount);
+        assert_eq!(destination_after, destination_before + transfer_amount);
+    }
+
+    #[test]
+    fn test_execute_order_if_ready_token_transfer_wrong_authority_fails() {
+        let mut svm = LiteSVM::new();
+        let program_bytes = include_bytes!("../../../target/deploy/order_executor.so");
+        svm.add_program(PROGRAM_ID, program_bytes)
+            .expect("load order_executor program");
+
+        let user = Keypair::new();
+        let keeper = Keypair::new();
+        let destination_owner = Keypair::new();
+        let mint_authority = Keypair::new();
+        let source_owner = Keypair::new();
+
+        svm.airdrop(&user.pubkey(), 10 * LAMPORTS_PER_SOL).unwrap();
+        svm.airdrop(&keeper.pubkey(), LAMPORTS_PER_SOL).unwrap();
+
+        let (order_counter_pda, _) = get_order_counter_pda(&user.pubkey());
+        let (order_pda, _) = get_order_pda(&user.pubkey(), 0);
+        let (vault_pda, _) = get_vault_pda(&user.pubkey(), 0);
+
+        let init_ix = init_user_counter_ix(&user.pubkey(), &order_counter_pda);
+        let init_tx = Transaction::new_signed_with_payer(
+            &[init_ix],
+            Some(&user.pubkey()),
+            &[&user],
+            svm.latest_blockhash(),
+        );
+        svm.send_transaction(init_tx)
+            .expect("init_user_counter should succeed");
+
+        // Source token account owner is NOT the vault PDA.
+        let (_, source_token_account, destination_token_account) = create_and_init_token_accounts(
+            &mut svm,
+            &user,
+            &source_owner.pubkey(),
+            &destination_owner.pubkey(),
+            &mint_authority,
+            1_000_000,
+        );
+
+        let transfer_ix = token_instruction::transfer(
+            &anchor_spl::token::ID,
+            &source_token_account,
+            &destination_token_account,
+            &vault_pda,
+            &[],
+            100_000,
+        )
+        .expect("spl token transfer ix");
+
+        let action = CpiAction {
+            program_id: anchor_spl::token::ID,
+            accounts: vec![
+                crate::CpiAccount {
+                    pubkey: source_token_account,
+                    is_writable: true,
+                },
+                crate::CpiAccount {
+                    pubkey: destination_token_account,
+                    is_writable: true,
+                },
+                crate::CpiAccount {
+                    pubkey: vault_pda,
+                    is_writable: false,
+                },
+            ],
+            data: transfer_ix.data,
+        };
+
+        let create_ix = create_order_ix(
+            &user.pubkey(),
+            &order_counter_pda,
+            &order_pda,
+            &vault_pda,
+            100_000_000,
+            Trigger::TimeAfter { slot: 0 },
+            action,
+            None,
+            0,
+        );
+        let create_tx = Transaction::new_signed_with_payer(
+            &[create_ix],
+            Some(&user.pubkey()),
+            &[&user],
+            svm.latest_blockhash(),
+        );
+        svm.send_transaction(create_tx)
+            .expect("create_order should succeed");
+
+        let execute_ix = execute_order_if_ready_ix(
+            &order_pda,
+            &vault_pda,
+            &user.pubkey(),
+            &keeper.pubkey(),
+            &order_pda,
+            vec![
+                AccountMeta::new(source_token_account, false),
+                AccountMeta::new(destination_token_account, false),
+                AccountMeta::new_readonly(vault_pda, false),
+                AccountMeta::new_readonly(anchor_spl::token::ID, false),
+            ],
+        );
+        let execute_tx = Transaction::new_signed_with_payer(
+            &[execute_ix],
+            Some(&user.pubkey()),
+            &[&user, &keeper],
+            svm.latest_blockhash(),
+        );
+        let execute_res = svm.send_transaction(execute_tx);
+        assert!(
+            execute_res.is_err(),
+            "execute_order_if_ready must fail when vault PDA is not token authority"
+        );
     }
 }

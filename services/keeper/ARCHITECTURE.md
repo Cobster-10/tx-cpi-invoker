@@ -1,103 +1,177 @@
-# Keeper Architecture
+# Keeper Service Architecture
 
-## Goal
+## 1) Keeper Mission
 
-Continuously observe open `Order` PDAs, detect when their trigger conditions become true, and submit execution transactions to the `order_executor` program.
+The keeper is an off-chain worker that:
 
-## High-Level Flow
+1. Finds open `Order` PDAs
+2. Checks whether each trigger is ready
+3. Submits execute transactions for ready orders
 
+In short: **discover -> evaluate -> execute -> record**.
+
+---
+
+## 2) Current Runtime Design (as implemented)
+
+```mermaid
+flowchart LR
+  RPC[(Solana RPC)] --> S[OrderScanner]
+  S --> Q[(In-memory queue)]
+  Q --> E[TriggerEvaluator]
+  E --> B[TxBuilder]
+  B --> T[TxSender]
+  T --> ST[SqliteStore placeholder]
 ```
-scan open orders -> upsert in work queue -> evaluate trigger -> build tx -> send tx -> record result
+
+Important current-state truth:
+
+- `TxSender` is scaffolded (returns simulated status in dry-run flow).
+- `SqliteStore` is currently in-memory behavior, not durable DB writes.
+- Stork route plumbing exists in types/client but trigger evaluator currently skips Stork execution.
+
+---
+
+## 3) Main Loop Behavior
+
+```mermaid
+flowchart TD
+  A[scanOpenOrders] --> B[upsert into queue]
+  B --> C[remove stale queue entries]
+  C --> D{for each queued order}
+  D --> E[evaluate trigger]
+  E -->|not ready| D
+  E -->|ready| F{duplicate already settled?}
+  F -->|yes| G[drop from queue]
+  F -->|no| H[build tx]
+  H --> I[send tx]
+  I --> J[record result + attempts]
+  J --> K{status confirmed/simulated?}
+  K -->|yes| G
+  K -->|no| D
 ```
 
-The loop runs every `pollIntervalMs`.
+This loop runs every `pollIntervalMs`.
 
-## Runtime Components
+---
 
-- `OrderExecutorClient`
-  - Scans and decodes open `Order` accounts from chain.
-  - Derives `order` and `vault` PDAs.
-  - Builds execution/cancel/close instructions with the required account metas.
-  - Builds vault-based system-transfer `CpiAction` payloads for order creation workflows.
+## 4) Components and Responsibilities
 
-- `OrderScanner`
-  - Thin wrapper around `OrderExecutorClient.scanOpenOrders()`.
+### `OrderExecutorClient`
 
-- `TriggerEvaluator`
-  - Evaluates base triggers:
-    - `time_after`
-    - `pda_value_equals`
-  - Stork trigger execution remains intentionally deferred until Stork invocation wiring is added.
+- Scans and decodes open order accounts from chain.
+- Derives order/vault PDAs from `(user, order_id)`.
+- Builds execute/cancel/close instructions.
+- Builds vault-based system-transfer CPI action payloads.
 
-- `TxBuilder`
-  - Builds a transaction containing the order-executor execute instruction.
+### `OrderScanner`
 
-- `TxSender`
-  - Sends (or simulates in dry-run mode) the transaction.
+- Thin wrapper around client scan.
 
-- `SqliteStore` (currently in-memory placeholder)
-  - Tracks duplicate execution status and attempt counts.
+### `TriggerEvaluator`
 
-## Queue Design
+- Evaluates currently-supported routes:
+  - `time_after`
+  - `pda_value_equals`
+- Stork trigger kinds currently return `null` (deferred route).
 
-The keeper uses an in-memory work queue (`Map<orderPubkey, OrderEnvelope>`) in `main.ts`:
+### `TxBuilder`
 
-1. Scan current open orders.
-2. Upsert each order into the queue.
-3. Remove queue entries not present in latest scan (stale/closed/canceled).
-4. For each queued order:
-   - Evaluate trigger.
-   - Skip if not ready.
-   - Build and send execution tx if ready.
-   - Record attempt/result.
-   - Remove from queue on terminal success (`confirmed` or `simulated`).
+- Builds execute transaction around program instruction.
+- Stork signed-update prepend is marked TODO.
 
-This is the "observe PDA creation -> add to queue -> wait for trigger -> execute" behavior.
+### `TxSender`
 
-## Account Model Requirements
+- Presently returns simulated result scaffold.
+- Real send/confirm/retry pipeline is not yet wired.
 
-Because the on-chain executor now uses a system-owned vault PDA:
+### `SqliteStore`
 
-- Execution instructions must include:
-  - `order` PDA
-  - `vault` PDA
-  - trigger-specific accounts
-  - dynamic CPI accounts
-  - CPI target program account (last)
+- Current code tracks attempts/duplicate suppression in memory.
+- Constructor accepts path but persistent sqlite behavior is not implemented yet.
 
-- System-transfer actions must use:
-  - `from = vaultPda`
-  - not `from = orderPda`
+### `MetricsServer`
 
-## Current Implementation Status
+- Placeholder class; no live metrics exported yet.
 
-Implemented:
+---
 
-- On-chain open-order scan and decode.
-- Queue-based scheduling loop.
-- Trigger evaluation for base triggers.
-- Vault-aware execute/cancel/close instruction builders.
-- Vault-based system-transfer action builder.
+## 5) Keeper <-> Program Account Contract
 
-Deferred:
+For execute calls, keeper must pass:
 
-- Stork signed-update ingestion and stork execution path.
-- Durable SQLite persistence (current class is in-memory).
-- Real transaction submission/signature confirmation path in `TxSender` (current dry-run scaffold).
-- Optional websocket subscriptions (`onProgramAccountChange`) for lower latency.
+1. Program fixed accounts (`order`, `vault`, `user`, `keeper`, route-specific account(s), `system_program`)
+2. CPI dynamic accounts in exact stored order
+3. CPI target program account as final remaining account
 
-## Optimal Architecture (Target)
+```mermaid
+flowchart LR
+  A[Fixed execute accounts] --> B[remaining: cpi account 0..n]
+  B --> C[remaining: target program account]
+  C --> D[on-chain validate + invoke_signed]
+```
 
-For production, keep the same module boundaries and add:
+If remaining account order or identities differ from stored `CpiAction`, execution fails.
 
-1. Hybrid ingestion:
-   - Polling as correctness fallback.
-   - `onProgramAccountChange` subscription for low-latency queue updates.
-2. Durable state:
-   - Persist queue/checkpoints/attempts in SQLite.
-3. Robust send pipeline:
-   - Simulate -> send -> confirm -> retry with backoff.
-4. Stork pipeline:
-   - Feed cache refresh + signed update ix injection before execute.
+---
 
-This keeps complexity low while making the keeper reliable and cost-efficient.
+## 6) Trigger Support Matrix (Current)
+
+| Trigger | Keeper Evaluates? | Execute Route |
+|---|---:|---|
+| `TimeAfter` | Yes | `base` |
+| `PdaValueEquals` | Yes | `base` |
+| `PriceBelowStork` | Not yet | Planned `stork` |
+| `StorkOutcomeEquals` | Not yet | Planned `stork` |
+
+---
+
+## 7) Failure Model and Idempotency
+
+Current protections:
+
+1. Duplicate guard by `(orderPubkey, route)` status in store.
+2. Queue entries removed when order is no longer open.
+3. Failed attempts recorded with incrementing count.
+
+Because order execution on-chain is state-gated (`executed/canceled`), retrying an already-finalized order is safe and will fail deterministically.
+
+---
+
+## 8) Production-Ready Target (minimal, non-bloated)
+
+Keep the same module boundaries; upgrade internals:
+
+1. **Real `TxSender` pipeline**
+   - simulate -> sign -> send -> confirm
+   - bounded retry with backoff + error classification
+2. **Durable store**
+   - real sqlite persistence for attempts/results/checkpoints
+3. **Hybrid ingestion**
+   - keep polling
+   - add websocket program-account subscription for lower latency
+4. **Stork route completion**
+   - fetch/cache signed updates
+   - prepend signed update ix before execute ix
+
+This is enough for reliability without introducing unnecessary system complexity.
+
+---
+
+## 9) End-to-End Keeper View
+
+```mermaid
+sequenceDiagram
+  participant K as Keeper
+  participant RPC as Solana RPC
+  participant P as order_executor Program
+
+  K->>RPC: getProgramAccounts(order_executor)
+  RPC-->>K: open orders
+  K->>K: evaluate trigger
+  K->>P: execute_order_* tx
+  P-->>K: success/failure
+  K->>K: record result, update queue
+```
+
+That is the operational model today: **poll + queue + evaluate + execute scaffold**, with clear extension points for full production behavior.
