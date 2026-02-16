@@ -1,51 +1,42 @@
-# Anchor Vault Program
+# Order Executor Program
 
-This template includes a simple SOL vault program built with [Anchor](https://www.anchor-lang.com/).
+An on-chain Solana program that executes user-specified CPIs when trigger conditions are met, built with [Anchor](https://www.anchor-lang.com/).
 
 ## Pre-deployed Program
 
-The vault program is deployed on **devnet** at:
+The program is deployed on **devnet** at:
 
 ```
-F4jZpgbtTb6RWNWq6v35fUeiAsRJMrDczVPv9U23yXjB
+3p8QPys3SHaEyf4szGgcoF4x2FbGaT3uTgZibLity5hi
 ```
-
-You can interact with it immediately by connecting your wallet to devnet.
 
 ## Deploying Your Own Program
-
-To deploy your own version of the program:
 
 ### 1. Generate a new program keypair
 
 ```bash
 cd anchor
-solana-keygen new -o target/deploy/vault-keypair.json
+solana-keygen new -o target/deploy/order_executor-keypair.json
 ```
 
 ### 2. Get the new program ID
 
 ```bash
-solana address -k target/deploy/vault-keypair.json
+solana address -k target/deploy/order_executor-keypair.json
 ```
 
 ### 3. Update the program ID
 
 Update the program ID in these files:
 
-- `anchor/Anchor.toml` - Update `vault = "..."` under `[programs.devnet]`
-- `anchor/programs/vault/src/lib.rs` - Update `declare_id!("...")`
+- `anchor/Anchor.toml` - Update `order_executor = "..."` under `[programs.devnet]`
+- `anchor/programs/order_executor/src/lib.rs` - Update `declare_id!("...")`
 
 ### 4. Build and deploy
 
 ```bash
-# Build the program
 anchor build
-
-# Get devnet SOL for deployment (~2 SOL needed)
 solana airdrop 2 --url devnet
-
-# Deploy to devnet
 anchor deploy --provider.cluster devnet
 ```
 
@@ -56,20 +47,18 @@ cd ..
 npm run codama:js
 ```
 
-This updates the generated client code in `app/generated/vault/` with your new program ID.
+This updates the generated client code in `apps/web/app/generated/order_executor/`.
 
 ## Program Overview
 
-The vault program allows users to:
+The order executor program allows users to:
 
-- **Deposit**: Send SOL to a personal vault PDA (Program Derived Address)
-- **Withdraw**: Retrieve all SOL from your vault
-
-Each user gets their own vault derived from their wallet address.
+- **Create Orders**: Define a CPI action and a trigger condition, escrowing SOL into an Order PDA
+- **Execute Orders**: Keepers execute orders when trigger conditions are met, invoking the stored CPI
+- **Cancel Orders**: Users can cancel pending orders and reclaim escrowed SOL
+- **Close Orders**: Users can close settled orders to reclaim rent
 
 ## Testing
-
-Run the Anchor tests:
 
 ```bash
 anchor test --skip-deploy

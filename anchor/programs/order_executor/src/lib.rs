@@ -4,17 +4,24 @@ use anchor_lang::system_program::{transfer, Transfer};
 #[cfg(test)]
 mod tests;
 
-declare_id!("HTGredcpihEqbJL9a3JBof4JQkgU5EdovAFt7xcPR2mg");
+declare_id!("3p8QPys3SHaEyf4szGgcoF4x2FbGaT3uTgZibLity5hi");
 
 use stork_solana_sdk::{pda::STORK_FEED_SEED, temporal_numeric_value::TemporalNumericValueFeed};
 
 #[program]
-pub mod vault {
+pub mod order_executor {
     use super::*;
+
+    pub fn init_user_counter(ctx: Context<InitUserCounter>) -> Result<()> {
+        let counter = &mut ctx.accounts.order_counter;
+        counter.user = ctx.accounts.user.key();
+        counter.next_order_id = 0;
+        counter.open_order_count = 0;
+        Ok(())
+    }
 
     pub fn create_order(
         ctx: Context<CreateOrder>,
-
         input_amount: u64,
         trigger: Trigger,
         action: CpiAction,
@@ -35,13 +42,10 @@ pub mod vault {
         require!(action.accounts.len() <= 32, OrderError::TooManyAccounts);
 
         let counter = &mut ctx.accounts.order_counter;
-        if counter.user == Pubkey::default() {
-            counter.user = ctx.accounts.user.key();
-            counter.next_order_id = 0;
-            counter.open_order_count = 0;
-        } else {
-            require!(counter.user == ctx.accounts.user.key(), OrderError::Unauthorized);
-        }
+        require!(
+            counter.user == ctx.accounts.user.key(),
+            OrderError::Unauthorized
+        );
 
         let order_id = counter.next_order_id;
         counter.next_order_id = counter
@@ -77,7 +81,7 @@ pub mod vault {
                 ctx.accounts.system_program.to_account_info(),
                 Transfer {
                     from: ctx.accounts.user.to_account_info(),
-                    to: ctx.accounts.order.to_account_info(),
+                    to: ctx.accounts.vault.to_account_info(),
                 },
             ),
             input_amount,
@@ -88,149 +92,56 @@ pub mod vault {
 
     pub fn execute_order_if_ready(ctx: Context<ExecuteOrder>) -> Result<()> {
         let clock = Clock::get()?;
-        validate_order_ready(&ctx.accounts.order, ctx.accounts.user.key(), &clock)?;
+        validate_order_ready(&ctx.accounts.order, &clock)?;
+        evaluate_trigger_base(&ctx.accounts.order.trigger, &clock, &ctx.accounts.pda_account)?;
 
-        let trigger_met = match &ctx.accounts.order.trigger {
-            Trigger::TimeAfter { slot } => clock.slot >= *slot,
-            Trigger::PdaValueEquals {
-                account,
-                expected_value,
-            } => {
-                let pda_account = ctx
-                    .accounts
-                    .pda_account
-                    .as_ref()
-                    .ok_or(OrderError::InvalidPdaAccount)?;
-                require!(pda_account.key() == *account, OrderError::InvalidPdaAccount);
-                let account_data = pda_account.try_borrow_data()?;
-                if account_data.len() < 8 {
-                    return Err(OrderError::InvalidPdaAccount.into());
-                }
-                let value = u64::from_le_bytes(
-                    account_data[0..8]
-                        .try_into()
-                        .map_err(|_| OrderError::InvalidPdaAccount)?,
-                );
-                value == *expected_value
-            }
-            Trigger::PriceBelowStork {
-                ..
-            }
-            | Trigger::StorkOutcomeEquals { .. } => {
-                return Err(OrderError::StorkTriggerRequiresStorkInstruction.into());
-            }
-        };
-
-        require!(trigger_met, OrderError::TriggerConditionNotMet);
         let order_pda = ctx.accounts.order.key();
+        let vault_pda = ctx.accounts.vault.key();
         execute_order_action(
             order_pda,
+            vault_pda,
             &ctx.accounts.order,
             ctx.program_id,
-            &ctx.remaining_accounts,
+            ctx.remaining_accounts,
         )?;
-        settle_execution(&mut ctx.accounts.order, &ctx.accounts.keeper)
+        settle_execution(
+            &mut ctx.accounts.order,
+            &ctx.accounts.vault.to_account_info(),
+            &ctx.accounts.keeper,
+            &ctx.accounts.system_program,
+            ctx.program_id,
+        )
     }
 
-    // seperate instruction for stork price triggers
     pub fn execute_order_if_ready_stork(
         ctx: Context<ExecuteOrderStork>,
         feed_id: [u8; 32],
     ) -> Result<()> {
         let clock = Clock::get()?;
-        validate_order_ready(&ctx.accounts.order, ctx.accounts.user.key(), &clock)?;
+        validate_order_ready(&ctx.accounts.order, &clock)?;
+        evaluate_trigger_stork(
+            &ctx.accounts.order.trigger,
+            &clock,
+            &ctx.accounts.stork_feed,
+            &feed_id,
+        )?;
 
-        let trigger_met = match &ctx.accounts.order.trigger {
-            Trigger::PriceBelowStork {
-                feed_id: expected_feed_id,
-                max_price_q,
-                max_age_sec,
-            } => {
-                require!(feed_id == *expected_feed_id, OrderError::InvalidOracleAccount);
-
-                let latest = ctx
-                    .accounts
-                    .stork_feed
-                    .get_latest_canonical_temporal_numeric_value_unchecked(&feed_id)?;
-
-                let now_ns = u64::try_from(clock.unix_timestamp)
-                    .map_err(|_| OrderError::InvalidClock)?
-                    .saturating_mul(1_000_000_000);
-
-                let max_age_ns = max_age_sec.saturating_mul(1_000_000_000);
-                require!(
-                    now_ns.saturating_sub(latest.timestamp_ns) <= max_age_ns,
-                    OrderError::StaleOraclePrice
-                );
-
-                latest.quantized_value <= *max_price_q
-            }
-            Trigger::StorkOutcomeEquals { .. } => {
-                return Err(OrderError::OutcomeTriggerRequiresOutcomeInstruction.into());
-            }
-            _ => return Err(OrderError::NonStorkTriggerRequiresBaseInstruction.into()),
-        };
-
-        require!(trigger_met, OrderError::TriggerConditionNotMet);
         let order_pda = ctx.accounts.order.key();
+        let vault_pda = ctx.accounts.vault.key();
         execute_order_action(
             order_pda,
+            vault_pda,
             &ctx.accounts.order,
             ctx.program_id,
-            &ctx.remaining_accounts,
+            ctx.remaining_accounts,
         )?;
-        settle_execution(&mut ctx.accounts.order, &ctx.accounts.keeper)
-    }
-
-
-    // instruction for stork outcome triggers
-    pub fn execute_order_if_ready_stork_outcome(
-        ctx: Context<ExecuteOrderStork>,
-        feed_id: [u8; 32],
-    ) -> Result<()> {
-        let clock = Clock::get()?;
-        validate_order_ready(&ctx.accounts.order, ctx.accounts.user.key(), &clock)?;
-
-        let trigger_met = match &ctx.accounts.order.trigger {
-            Trigger::StorkOutcomeEquals {
-                feed_id: expected_feed_id,
-                expected_outcome_q,
-                max_age_sec,
-            } => {
-                require!(feed_id == *expected_feed_id, OrderError::InvalidOracleAccount);
-
-                let latest = ctx
-                    .accounts
-                    .stork_feed
-                    .get_latest_canonical_temporal_numeric_value_unchecked(&feed_id)?;
-
-                let now_ns = u64::try_from(clock.unix_timestamp)
-                    .map_err(|_| OrderError::InvalidClock)?
-                    .saturating_mul(1_000_000_000);
-
-                let max_age_ns = max_age_sec.saturating_mul(1_000_000_000);
-                require!(
-                    now_ns.saturating_sub(latest.timestamp_ns) <= max_age_ns,
-                    OrderError::StaleOraclePrice
-                );
-
-                latest.quantized_value == *expected_outcome_q
-            }
-            Trigger::PriceBelowStork { .. } => {
-                return Err(OrderError::PriceTriggerRequiresPriceInstruction.into());
-            }
-            _ => return Err(OrderError::NonStorkTriggerRequiresBaseInstruction.into()),
-        };
-
-        require!(trigger_met, OrderError::TriggerConditionNotMet);
-        let order_pda = ctx.accounts.order.key();
-        execute_order_action(
-            order_pda,
-            &ctx.accounts.order,
+        settle_execution(
+            &mut ctx.accounts.order,
+            &ctx.accounts.vault.to_account_info(),
+            &ctx.accounts.keeper,
+            &ctx.accounts.system_program,
             ctx.program_id,
-            &ctx.remaining_accounts,
-        )?;
-        settle_execution(&mut ctx.accounts.order, &ctx.accounts.keeper)
+        )
     }
 
     pub fn cancel_order(ctx: Context<CancelOrder>, order_id: u64) -> Result<()> {
@@ -238,30 +149,26 @@ pub mod vault {
 
         require!(!order.executed, OrderError::OrderAlreadyExecuted);
         require!(!order.canceled, OrderError::OrderAlreadyCanceled);
-        require!(
-            order.user == ctx.accounts.user.key(),
-            OrderError::Unauthorized
-        );
         require!(order.order_id == order_id, OrderError::InvalidOrderId);
 
-        let refund_amount = ctx.accounts.order.to_account_info().lamports();
+        let refund_amount = ctx.accounts.vault.to_account_info().lamports();
         require!(refund_amount > 0, OrderError::InsufficientEscrowBalance);
 
-        let order_seeds: &[&[&[u8]]] = &[&[
-            b"order",
+        let vault_seeds: &[&[&[u8]]] = &[&[
+            b"vault",
             order.user.as_ref(),
             &order_id.to_le_bytes(),
-            &[ctx.bumps.order],
+            &[ctx.bumps.vault],
         ]];
 
         transfer(
             CpiContext::new_with_signer(
                 ctx.accounts.system_program.to_account_info(),
                 Transfer {
-                    from: ctx.accounts.order.to_account_info(),
+                    from: ctx.accounts.vault.to_account_info(),
                     to: ctx.accounts.user.to_account_info(),
                 },
-                order_seeds,
+                vault_seeds,
             ),
             refund_amount,
         )?;
@@ -279,36 +186,31 @@ pub mod vault {
             order.executed || order.canceled,
             OrderError::OrderNotSettled
         );
-        require!(
-            order.user == ctx.accounts.user.key(),
-            OrderError::Unauthorized
-        );
         require!(order.order_id == order_id, OrderError::InvalidOrderId);
 
-        let remaining_lamports = ctx.accounts.order.to_account_info().lamports();
+        let remaining_lamports = ctx.accounts.vault.to_account_info().lamports();
         if remaining_lamports > 0 {
-            let order_seeds: &[&[&[u8]]] = &[&[
-                b"order",
+            let vault_seeds: &[&[&[u8]]] = &[&[
+                b"vault",
                 order.user.as_ref(),
                 &order_id.to_le_bytes(),
-                &[ctx.bumps.order],
+                &[ctx.bumps.vault],
             ]];
 
             transfer(
                 CpiContext::new_with_signer(
                     ctx.accounts.system_program.to_account_info(),
                     Transfer {
-                        from: ctx.accounts.order.to_account_info(),
+                        from: ctx.accounts.vault.to_account_info(),
                         to: ctx.accounts.user.to_account_info(),
                     },
-                    order_seeds,
+                    vault_seeds,
                 ),
                 remaining_lamports,
             )?;
         }
 
         let counter = &mut ctx.accounts.order_counter;
-        require!(counter.user == order.user, OrderError::Unauthorized);
         counter.open_order_count = counter
             .open_order_count
             .checked_sub(1)
@@ -316,14 +218,11 @@ pub mod vault {
 
         Ok(())
     }
-
 }
 
-//preliminary checks to ensure order is ready to be executed
-fn validate_order_ready(order: &Order, user: Pubkey, clock: &Clock) -> Result<()> {
+fn validate_order_ready(order: &Order, clock: &Clock) -> Result<()> {
     require!(!order.executed, OrderError::OrderAlreadyExecuted);
     require!(!order.canceled, OrderError::OrderAlreadyCanceled);
-    require!(user == order.user, OrderError::Unauthorized);
 
     if let Some(expires) = order.expires_slot {
         require!(clock.slot <= expires, OrderError::OrderExpired);
@@ -332,33 +231,131 @@ fn validate_order_ready(order: &Order, user: Pubkey, clock: &Clock) -> Result<()
     Ok(())
 }
 
-/* make sure cpi program is whitelisted
-validate that the accounts passed in are the same as the CPI action accounts
-create the instruction object with the accounts metadata
-call the invoke with the the instruction, actual accounts, and order PDA for signing if needed
-*/
+fn evaluate_trigger_base(
+    trigger: &Trigger,
+    clock: &Clock,
+    pda_account: &Option<AccountInfo>,
+) -> Result<()> {
+    let trigger_met = match trigger {
+        Trigger::TimeAfter { slot } => clock.slot >= *slot,
+        Trigger::PdaValueEquals {
+            account,
+            expected_value,
+        } => {
+            let pda_account = pda_account
+                .as_ref()
+                .ok_or(OrderError::InvalidPdaAccount)?;
+            require!(pda_account.key() == *account, OrderError::InvalidPdaAccount);
+            let account_data = pda_account.try_borrow_data()?;
+            if account_data.len() < 8 {
+                return Err(OrderError::InvalidPdaAccount.into());
+            }
+            let value = u64::from_le_bytes(
+                account_data[0..8]
+                    .try_into()
+                    .map_err(|_| OrderError::InvalidPdaAccount)?,
+            );
+            value == *expected_value
+        }
+        Trigger::PriceBelowStork { .. } | Trigger::StorkOutcomeEquals { .. } => {
+            return Err(OrderError::StorkTriggerRequiresStorkInstruction.into());
+        }
+    };
+    require!(trigger_met, OrderError::TriggerConditionNotMet);
+    Ok(())
+}
+
+fn evaluate_trigger_stork(
+    trigger: &Trigger,
+    clock: &Clock,
+    stork_feed: &Account<TemporalNumericValueFeed>,
+    feed_id: &[u8; 32],
+) -> Result<()> {
+    let trigger_met = match trigger {
+        Trigger::PriceBelowStork {
+            feed_id: expected_feed_id,
+            max_price_q,
+            max_age_sec,
+        } => {
+            require!(*feed_id == *expected_feed_id, OrderError::InvalidOracleAccount);
+
+            let latest = stork_feed
+                .get_latest_canonical_temporal_numeric_value_unchecked(feed_id)?;
+
+            let now_ns = u64::try_from(clock.unix_timestamp)
+                .map_err(|_| OrderError::InvalidClock)?
+                .saturating_mul(1_000_000_000);
+
+            let max_age_ns = max_age_sec.saturating_mul(1_000_000_000);
+            require!(
+                now_ns.saturating_sub(latest.timestamp_ns) <= max_age_ns,
+                OrderError::StaleOraclePrice
+            );
+
+            latest.quantized_value <= *max_price_q
+        }
+        Trigger::StorkOutcomeEquals {
+            feed_id: expected_feed_id,
+            expected_outcome_q,
+            max_age_sec,
+        } => {
+            require!(*feed_id == *expected_feed_id, OrderError::InvalidOracleAccount);
+
+            let latest = stork_feed
+                .get_latest_canonical_temporal_numeric_value_unchecked(feed_id)?;
+
+            let now_ns = u64::try_from(clock.unix_timestamp)
+                .map_err(|_| OrderError::InvalidClock)?
+                .saturating_mul(1_000_000_000);
+
+            let max_age_ns = max_age_sec.saturating_mul(1_000_000_000);
+            require!(
+                now_ns.saturating_sub(latest.timestamp_ns) <= max_age_ns,
+                OrderError::StaleOraclePrice
+            );
+
+            latest.quantized_value == *expected_outcome_q
+        }
+        _ => return Err(OrderError::NonStorkTriggerRequiresBaseInstruction.into()),
+    };
+    require!(trigger_met, OrderError::TriggerConditionNotMet);
+    Ok(())
+}
+
+/// Validates remaining_accounts against the stored CpiAction, builds the CPI
+/// instruction, and invokes it with Order/Vault PDA signer seeds.
+///
+/// remaining_accounts layout: [cpi_account_0, ..., cpi_account_n, target_program]
 fn execute_order_action<'info>(
     order_pda: Pubkey,
+    vault_pda: Pubkey,
     order: &Order,
     program_id: &Pubkey,
     remaining_accounts: &[AccountInfo<'info>],
 ) -> Result<()> {
+    let action = &order.action;
+
     require!(
-        is_whitelisted_program(order.action.program_id),
+        is_whitelisted_program(action.program_id),
         OrderError::ProgramNotWhitelisted
     );
 
+    let expected_len = action.accounts.len() + 1; // +1 for the target program
     require!(
-        remaining_accounts.len() >= order.action.accounts.len(),
+        remaining_accounts.len() >= expected_len,
         OrderError::InsufficientAccounts
     );
 
-    let action = order.action.clone();
     let order_user = order.user;
     let order_id_bytes = order.order_id.to_le_bytes();
     let (_, bump) =
         Pubkey::find_program_address(&[b"order", order_user.as_ref(), &order_id_bytes], program_id);
     let order_seeds: &[&[u8]] = &[b"order", order_user.as_ref(), &order_id_bytes, &[bump]];
+    let (_, vault_bump) = Pubkey::find_program_address(
+        &[b"vault", order_user.as_ref(), &order_id_bytes],
+        program_id,
+    );
+    let vault_seeds: &[&[u8]] = &[b"vault", order_user.as_ref(), &order_id_bytes, &[vault_bump]];
 
     for (i, expected_account) in action.accounts.iter().enumerate() {
         let provided_account = &remaining_accounts[i];
@@ -373,10 +370,18 @@ fn execute_order_action<'info>(
             OrderError::WritableEscalation
         );
 
-        if expected_account.is_writable {
-            validate_pda_authority(provided_account, &order_pda)?;
-        }
     }
+
+    // The target program AccountInfo is the last remaining account after CPI accounts
+    let target_program_info = &remaining_accounts[action.accounts.len()];
+    require!(
+        target_program_info.key() == action.program_id,
+        OrderError::AccountMismatch
+    );
+    require!(
+        target_program_info.executable,
+        OrderError::ProgramNotWhitelisted
+    );
 
     let instruction = anchor_lang::solana_program::instruction::Instruction {
         program_id: action.program_id,
@@ -386,32 +391,65 @@ fn execute_order_action<'info>(
             .map(|a| anchor_lang::solana_program::instruction::AccountMeta {
                 pubkey: a.pubkey,
                 is_writable: a.is_writable,
-                is_signer: false,
+                is_signer: a.pubkey == order_pda || a.pubkey == vault_pda,
             })
             .collect(),
         data: action.data.clone(),
     };
 
-    let account_infos: Vec<AccountInfo> = remaining_accounts
+    // Collect CPI account infos + the target program info
+    let mut account_infos: Vec<AccountInfo> = remaining_accounts
         .iter()
         .take(action.accounts.len())
         .cloned()
         .collect();
+    account_infos.push(target_program_info.clone());
 
     anchor_lang::solana_program::program::invoke_signed(
         &instruction,
         &account_infos,
-        &[order_seeds],
+        &[order_seeds, vault_seeds],
     )?;
 
     Ok(())
 }
 
-// move funds from order escrow to keeper and mark order as executed
-fn settle_execution<'info>(order: &mut Account<'info, Order>, keeper: &Signer<'info>) -> Result<()> {
+fn settle_execution<'info>(
+    order: &mut Account<'info, Order>,
+    vault: &AccountInfo<'info>,
+    keeper: &Signer<'info>,
+    system_program: &Program<'info, System>,
+    program_id: &Pubkey,
+) -> Result<()> {
     if order.execution_bounty > 0 {
-        **keeper.try_borrow_mut_lamports()? += order.execution_bounty;
-        **order.to_account_info().try_borrow_mut_lamports()? -= order.execution_bounty;
+        let vault_lamports = vault.lamports();
+        require!(
+            vault_lamports >= order.execution_bounty,
+            OrderError::InsufficientEscrowBalance
+        );
+        let order_id_bytes = order.order_id.to_le_bytes();
+        let (_, vault_bump) = Pubkey::find_program_address(
+            &[b"vault", order.user.as_ref(), &order_id_bytes],
+            program_id,
+        );
+        let vault_seeds: &[&[&[u8]]] = &[&[
+            b"vault",
+            order.user.as_ref(),
+            &order_id_bytes,
+            &[vault_bump],
+        ]];
+
+        transfer(
+            CpiContext::new_with_signer(
+                system_program.to_account_info(),
+                Transfer {
+                    from: vault.clone(),
+                    to: keeper.to_account_info(),
+                },
+                vault_seeds,
+            ),
+            order.execution_bounty,
+        )?;
     }
     order.executed = true;
     Ok(())
@@ -420,26 +458,8 @@ fn settle_execution<'info>(order: &mut Account<'info, Order>, keeper: &Signer<'i
 fn is_whitelisted_program(program_id: Pubkey) -> bool {
     matches!(
         program_id,
-        anchor_lang::system_program::ID | anchor_spl::token::ID | anchor_spl::associated_token::ID
+        anchor_lang::system_program::ID | anchor_spl::token::ID
     )
-}
-
-fn validate_pda_authority(account: &AccountInfo, order_pda: &Pubkey) -> Result<()> {
-    if account.owner == &anchor_spl::token::ID {
-        let account_data = account.try_borrow_data()?;
-        if account_data.len() >= 64 {
-            let authority = Pubkey::try_from(&account_data[32..64])
-                .map_err(|_| OrderError::InvalidAccountAuthority)?;
-            require!(authority == *order_pda, OrderError::InvalidAccountAuthority);
-        }
-    } else if account.owner == &anchor_lang::system_program::ID {
-        require!(
-            account.key() == *order_pda,
-            OrderError::InvalidAccountAuthority
-        );
-    }
-
-    Ok(())
 }
 
 #[account]
@@ -452,7 +472,6 @@ pub struct UserOrderCounter {
 impl UserOrderCounter {
     pub const LEN: usize = 8 + 32 + 8 + 8; // discriminator + fields
 }
-
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq)]
 pub enum Trigger {
@@ -523,16 +542,32 @@ impl Order {
 }
 
 #[derive(Accounts)]
+pub struct InitUserCounter<'info> {
+    #[account(mut)]
+    pub user: Signer<'info>,
+
+    #[account(
+        init,
+        payer = user,
+        space = UserOrderCounter::LEN,
+        seeds = [b"order_counter", user.key().as_ref()],
+        bump
+    )]
+    pub order_counter: Account<'info, UserOrderCounter>,
+
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
 pub struct CreateOrder<'info> {
     #[account(mut)]
     pub user: Signer<'info>,
 
     #[account(
-        init_if_needed,
-        payer = user,
-        space = UserOrderCounter::LEN,
+        mut,
         seeds = [b"order_counter", user.key().as_ref()],
-        bump
+        bump,
+        has_one = user @ OrderError::Unauthorized
     )]
     pub order_counter: Account<'info, UserOrderCounter>,
 
@@ -544,20 +579,38 @@ pub struct CreateOrder<'info> {
         bump
     )]
     pub order: Account<'info, Order>,
+    #[account(
+        init,
+        payer = user,
+        space = 0,
+        owner = anchor_lang::system_program::ID,
+        seeds = [b"vault", user.key().as_ref(), &order_counter.next_order_id.to_le_bytes()],
+        bump
+    )]
+    /// CHECK: System-owned vault PDA (0 data); owner+seeds enforced by constraints.
+    pub vault: AccountInfo<'info>,
 
     pub system_program: Program<'info, System>,
 }
 
-
 #[derive(Accounts)]
 pub struct ExecuteOrder<'info> {
-    #[account(mut)]
+    #[account(mut, has_one = user @ OrderError::Unauthorized)]
     pub order: Account<'info, Order>,
+    #[account(
+        mut,
+        owner = anchor_lang::system_program::ID,
+        seeds = [b"vault", order.user.as_ref(), &order.order_id.to_le_bytes()],
+        bump
+    )]
+    /// CHECK: System-owned vault PDA; owner+seeds enforced by constraints.
+    pub vault: AccountInfo<'info>,
 
-    #[account(mut)]
+    /// CHECK: Read-only user pubkey; validated via has_one on order.
     pub user: AccountInfo<'info>,
     #[account(mut)]
     pub keeper: Signer<'info>,
+    /// CHECK: Optional PDA for PdaValueEquals trigger; validated in evaluate_trigger_base.
     pub pda_account: Option<AccountInfo<'info>>,
     pub system_program: Program<'info, System>,
 }
@@ -565,15 +618,23 @@ pub struct ExecuteOrder<'info> {
 #[derive(Accounts)]
 #[instruction(feed_id: [u8; 32])]
 pub struct ExecuteOrderStork<'info> {
-    #[account(mut)]
+    #[account(mut, has_one = user @ OrderError::Unauthorized)]
     pub order: Account<'info, Order>,
+    #[account(
+        mut,
+        owner = anchor_lang::system_program::ID,
+        seeds = [b"vault", order.user.as_ref(), &order.order_id.to_le_bytes()],
+        bump
+    )]
+    /// CHECK: System-owned vault PDA; owner+seeds enforced by constraints.
+    pub vault: AccountInfo<'info>,
     #[account(
         seeds = [STORK_FEED_SEED.as_ref(), feed_id.as_ref()],
         bump,
         seeds::program = stork_solana_sdk::ID
     )]
     pub stork_feed: Account<'info, TemporalNumericValueFeed>,
-    #[account(mut)]
+    /// CHECK: Read-only user pubkey; validated via has_one on order.
     pub user: AccountInfo<'info>,
     #[account(mut)]
     pub keeper: Signer<'info>,
@@ -592,6 +653,14 @@ pub struct CancelOrder<'info> {
         has_one = user @ OrderError::Unauthorized
     )]
     pub order: Account<'info, Order>,
+    #[account(
+        mut,
+        owner = anchor_lang::system_program::ID,
+        seeds = [b"vault", user.key().as_ref(), &order_id.to_le_bytes()],
+        bump
+    )]
+    /// CHECK: System-owned vault PDA; owner+seeds enforced by constraints.
+    pub vault: AccountInfo<'info>,
     pub system_program: Program<'info, System>,
 }
 
@@ -615,6 +684,14 @@ pub struct CloseOrder<'info> {
         has_one = user @ OrderError::Unauthorized
     )]
     pub order: Account<'info, Order>,
+    #[account(
+        mut,
+        owner = anchor_lang::system_program::ID,
+        seeds = [b"vault", user.key().as_ref(), &order_id.to_le_bytes()],
+        bump
+    )]
+    /// CHECK: System-owned vault PDA; owner+seeds enforced by constraints.
+    pub vault: AccountInfo<'info>,
     pub system_program: Program<'info, System>,
 }
 
@@ -656,8 +733,6 @@ pub enum OrderError {
     AccountMismatch,
     #[msg("Writable escalation not allowed")]
     WritableEscalation,
-    #[msg("Invalid account authority")]
-    InvalidAccountAuthority,
     #[msg("Invalid clock value")]
     InvalidClock,
     #[msg("Stale oracle price")]
@@ -666,12 +741,6 @@ pub enum OrderError {
     StorkTriggerRequiresStorkInstruction,
     #[msg("This trigger must be executed with the non-Stork instruction")]
     NonStorkTriggerRequiresBaseInstruction,
-    #[msg("Outcome trigger must be executed with the stork outcome instruction")]
-    OutcomeTriggerRequiresOutcomeInstruction,
-    #[msg("Price trigger must be executed with the stork price instruction")]
-    PriceTriggerRequiresPriceInstruction,
-    #[msg("Missing Stork feed account")]
-    MissingStorkFeedAccount,
     #[msg("Order ID overflow")]
     OrderIdOverflow,
     #[msg("Order count overflow")]

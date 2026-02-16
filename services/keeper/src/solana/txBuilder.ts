@@ -1,6 +1,6 @@
 import { PublicKey, Transaction } from "@solana/web3.js";
 import { ExecutionCandidate, FeedSnapshot, OrderEnvelope } from "../orders/types.js";
-import { VaultClient } from "./vaultClient.js";
+import { OrderExecutorClient } from "./orderExecutorClient.js";
 
 export type BuildTransactionInput = {
   candidate: ExecutionCandidate;
@@ -10,12 +10,12 @@ export type BuildTransactionInput = {
 };
 
 export class TxBuilder {
-  constructor(private readonly vaultClient: VaultClient) {}
+  constructor(private readonly client: OrderExecutorClient) {}
 
   build(input: BuildTransactionInput): Transaction {
-    // Scaffold: builds only the vault execute instruction.
+    // Scaffold: builds only the order executor execute instruction.
     // TODO: prepend signed Stork update instruction when snapshot has payload.
-    const instruction = this.vaultClient.buildExecuteInstruction({
+    const instruction = this.client.buildExecuteInstruction({
       route: input.candidate.route,
       order: input.order,
       keeper: input.keeper,

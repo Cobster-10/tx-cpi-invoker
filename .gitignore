@@ -2,6 +2,8 @@
 
 # dependencies
 /node_modules
+/apps/web/node_modules
+/services/keeper/node_modules
 /.pnp
 .pnp.*
 .yarn/*
@@ -14,7 +16,7 @@
 /coverage
 
 # next.js
-/.next/
+/apps/web/.next/
 /out/
 
 # production
@@ -23,6 +25,7 @@
 # misc
 .DS_Store
 *.pem
+/.skills
 
 # debug
 npm-debug.log*
@@ -44,5 +47,5 @@ next-env.d.ts
 /anchor/.anchor/
 /anchor/target/
 
-/services/keeper/node_modules
+# build artifacts
 /services/keeper/dist

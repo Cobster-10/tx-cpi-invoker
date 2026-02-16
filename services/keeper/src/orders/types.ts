@@ -1,6 +1,6 @@
 import { PublicKey } from "@solana/web3.js";
 
-export type KeeperRoute = "base" | "stork_price" | "stork_outcome";
+export type KeeperRoute = "base" | "stork";
 
 export type Trigger =
   | { kind: "time_after"; slot: bigint }
@@ -26,6 +26,7 @@ export type CpiAction = {
 
 export type OrderEnvelope = {
   orderPubkey: PublicKey;
+  vaultPubkey?: PublicKey;
   orderId: bigint;
   user: PublicKey;
   trigger: Trigger;

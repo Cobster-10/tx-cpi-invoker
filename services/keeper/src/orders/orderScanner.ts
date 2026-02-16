@@ -1,11 +1,10 @@
-import { VaultClient } from "../solana/vaultClient.js";
+import { OrderExecutorClient } from "../solana/orderExecutorClient.js";
 import { OrderEnvelope } from "./types.js";
 
 export class OrderScanner {
-  constructor(private readonly vaultClient: VaultClient) {}
+  constructor(private readonly client: OrderExecutorClient) {}
 
   async scanOpenOrders(): Promise<OrderEnvelope[]> {
-    // TODO: fetch program accounts and decode OrderEnvelope objects.
-    return this.vaultClient.scanOpenOrders();
+    return this.client.scanOpenOrders();
   }
 }
