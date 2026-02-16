@@ -4,7 +4,7 @@
     "js": [
       {
         "from": "@codama/renderers-js",
-        "args": ["./apps/web/app/generated/order_executor"]
+        "args": ["./apps/web/src/lib/generated/order_executor"]
       }
     ]
   }

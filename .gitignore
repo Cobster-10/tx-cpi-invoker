@@ -15,8 +15,9 @@
 # testing
 /coverage
 
-# next.js
-/apps/web/.next/
+# frontend build caches
+/apps/web/.svelte-kit/
+/apps/web/build/
 /out/
 
 # production

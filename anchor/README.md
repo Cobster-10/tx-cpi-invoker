@@ -47,7 +47,7 @@ cd ..
 npm run codama:js
 ```
 
-This updates the generated client code in `apps/web/app/generated/order_executor/`.
+This updates the generated client code in `apps/web/src/lib/generated/order_executor/`.
 
 ## Program Overview
 
