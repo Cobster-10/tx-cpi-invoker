@@ -40,7 +40,10 @@ pub mod vault {
             counter.next_order_id = 0;
             counter.open_order_count = 0;
         } else {
-            require!(counter.user == ctx.accounts.user.key(), OrderError::Unauthorized);
+            require!(
+                counter.user == ctx.accounts.user.key(),
+                OrderError::Unauthorized
+            );
         }
 
         let order_id = counter.next_order_id;
@@ -113,10 +116,7 @@ pub mod vault {
                 );
                 value == *expected_value
             }
-            Trigger::PriceBelowStork {
-                ..
-            }
-            | Trigger::StorkOutcomeEquals { .. } => {
+            Trigger::PriceBelowStork { .. } | Trigger::StorkOutcomeEquals { .. } => {
                 return Err(OrderError::StorkTriggerRequiresStorkInstruction.into());
             }
         };
@@ -146,7 +146,10 @@ pub mod vault {
                 max_price_q,
                 max_age_sec,
             } => {
-                require!(feed_id == *expected_feed_id, OrderError::InvalidOracleAccount);
+                require!(
+                    feed_id == *expected_feed_id,
+                    OrderError::InvalidOracleAccount
+                );
 
                 let latest = ctx
                     .accounts
@@ -182,7 +185,6 @@ pub mod vault {
         settle_execution(&mut ctx.accounts.order, &ctx.accounts.keeper)
     }
 
-
     // instruction for stork outcome triggers
     pub fn execute_order_if_ready_stork_outcome(
         ctx: Context<ExecuteOrderStork>,
@@ -197,7 +199,10 @@ pub mod vault {
                 expected_outcome_q,
                 max_age_sec,
             } => {
-                require!(feed_id == *expected_feed_id, OrderError::InvalidOracleAccount);
+                require!(
+                    feed_id == *expected_feed_id,
+                    OrderError::InvalidOracleAccount
+                );
 
                 let latest = ctx
                     .accounts
@@ -316,7 +321,6 @@ pub mod vault {
 
         Ok(())
     }
-
 }
 
 //preliminary checks to ensure order is ready to be executed
@@ -356,8 +360,10 @@ fn execute_order_action<'info>(
     let action = order.action.clone();
     let order_user = order.user;
     let order_id_bytes = order.order_id.to_le_bytes();
-    let (_, bump) =
-        Pubkey::find_program_address(&[b"order", order_user.as_ref(), &order_id_bytes], program_id);
+    let (_, bump) = Pubkey::find_program_address(
+        &[b"order", order_user.as_ref(), &order_id_bytes],
+        program_id,
+    );
     let order_seeds: &[&[u8]] = &[b"order", order_user.as_ref(), &order_id_bytes, &[bump]];
 
     for (i, expected_account) in action.accounts.iter().enumerate() {
@@ -408,7 +414,10 @@ fn execute_order_action<'info>(
 }
 
 // move funds from order escrow to keeper and mark order as executed
-fn settle_execution<'info>(order: &mut Account<'info, Order>, keeper: &Signer<'info>) -> Result<()> {
+fn settle_execution<'info>(
+    order: &mut Account<'info, Order>,
+    keeper: &Signer<'info>,
+) -> Result<()> {
     if order.execution_bounty > 0 {
         **keeper.try_borrow_mut_lamports()? += order.execution_bounty;
         **order.to_account_info().try_borrow_mut_lamports()? -= order.execution_bounty;
@@ -452,7 +461,6 @@ pub struct UserOrderCounter {
 impl UserOrderCounter {
     pub const LEN: usize = 8 + 32 + 8 + 8; // discriminator + fields
 }
-
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq)]
 pub enum Trigger {
@@ -548,16 +556,17 @@ pub struct CreateOrder<'info> {
     pub system_program: Program<'info, System>,
 }
 
-
 #[derive(Accounts)]
 pub struct ExecuteOrder<'info> {
     #[account(mut)]
     pub order: Account<'info, Order>,
 
+    /// CHECK: The executing user's pubkey is validated against `order.user` in `validate_order_ready`.
     #[account(mut)]
     pub user: AccountInfo<'info>,
     #[account(mut)]
     pub keeper: Signer<'info>,
+    /// CHECK: Optional trigger account; address and data are validated at runtime for `PdaValueEquals`.
     pub pda_account: Option<AccountInfo<'info>>,
     pub system_program: Program<'info, System>,
 }
@@ -573,6 +582,7 @@ pub struct ExecuteOrderStork<'info> {
         seeds::program = stork_solana_sdk::ID
     )]
     pub stork_feed: Account<'info, TemporalNumericValueFeed>,
+    /// CHECK: The executing user's pubkey is validated against `order.user` in `validate_order_ready`.
     #[account(mut)]
     pub user: AccountInfo<'info>,
     #[account(mut)]

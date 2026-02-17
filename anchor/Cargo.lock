@@ -5123,8 +5123,6 @@ checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 [[package]]
 name = "stork-solana-sdk"
 version = "0.0.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da881c9f8df4724099d32a45c25c7a775398c03c82aaf38775a2f5d4e8ba7591"
 dependencies = [
  "anchor-lang",
 ]

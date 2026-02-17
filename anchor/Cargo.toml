@@ -2,6 +2,9 @@
 members = ["programs/*"]
 resolver = "2"
 
+[patch.crates-io]
+stork-solana-sdk = { path = "vendor/stork-solana-sdk" }
+
 [profile.release]
 overflow-checks = true
 lto = "fat"
