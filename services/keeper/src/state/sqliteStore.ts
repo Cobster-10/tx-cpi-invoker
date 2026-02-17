@@ -1,19 +1,10 @@
 import { ExecutionCandidate, ExecutionResult, KeeperRoute } from "../orders/types.js";
 
-// Scaffold store: in-memory only. Replace with SQLite persistence in implementation step.
+// In-memory store placeholder; replace with durable SQLite implementation when needed.
 export class SqliteStore {
-  private readonly checkpoints = new Map<string, string>();
   private readonly attempts = new Map<string, { status: string; attempts: number }>();
 
   constructor(_path: string) {}
-
-  getCheckpoint(key: string): string | null {
-    return this.checkpoints.get(key) ?? null;
-  }
-
-  setCheckpoint(key: string, value: string): void {
-    this.checkpoints.set(key, value);
-  }
 
   isDuplicate(orderPubkey: string, route: KeeperRoute): boolean {
     const entry = this.attempts.get(`${orderPubkey}:${route}`);
@@ -45,6 +36,4 @@ export class SqliteStore {
       attempts,
     });
   }
-
-  close(): void {}
 }

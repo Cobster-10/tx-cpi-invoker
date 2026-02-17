@@ -1,53 +1,35 @@
 {
   "name": "tx-cpi-invoker",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "services/*"
+  ],
   "scripts": {
     "anchor-build": "cd anchor && anchor build",
     "anchor-test": "cd anchor && anchor test --skip-deploy",
-    "build": "next build",
-    "ci": "npm run build && npm run lint && npm run format:check",
     "codama:js": "codama run js",
-    "dev": "next dev",
+    "web:dev": "npm --prefix apps/web run dev",
+    "web:build": "npm --prefix apps/web run build",
+    "web:preview": "npm --prefix apps/web run preview",
+    "web:check": "npm --prefix apps/web run check",
+    "keeper:dev": "npm --prefix services/keeper run dev",
+    "keeper:build": "npm --prefix services/keeper run build",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "keeper:build": "npm --prefix services/keeper run build",
-    "keeper:dev": "npm --prefix services/keeper run dev",
-    "lint": "eslint",
+    "ci": "npm run web:build && npm run web:check && npm run format:check",
     "setup": "npm run anchor-build && npm run codama:js",
-    "start": "next start"
+    "dev": "npm run web:dev",
+    "build": "npm run web:build",
+    "start": "npm run web:preview",
+    "check": "npm run web:check"
   },
-  "description": "Next.js, Tailwind, @solana/react-hooks, Anchor vault program",
-  "keywords": [
-    "anchor",
-    "kit",
-    "nextjs",
-    "react",
-    "solana-kit",
-    "tailwind",
-    "typescript"
-  ],
+  "description": "Trigger-based Solana CPI executor (Anchor program + order keeper + frontend)",
   "version": "0.0.0",
-  "private": true,
-  "dependencies": {
-    "@solana/client": "^1.2.0",
-    "@solana/kit": "^5.1.0",
-    "@solana/react-hooks": "^1.1.5",
-    "next": "16.0.10",
-    "react": "19.2.3",
-    "react-dom": "19.2.3",
-    "ws": "^8.18.3"
-  },
   "devDependencies": {
     "@codama/nodes-from-anchor": "^1.3.8",
     "@codama/renderers-js": "^1.5.5",
-    "@tailwindcss/postcss": "^4",
-    "@types/node": "^20",
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
     "codama": "^1.5.0",
-    "eslint": "^9",
-    "eslint-config-next": "16.0.10",
-    "prettier": "^3.6.2",
-    "tailwindcss": "^4",
-    "typescript": "^5"
+    "prettier": "^3.6.2"
   }
 }

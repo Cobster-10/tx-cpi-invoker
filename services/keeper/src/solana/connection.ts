@@ -4,7 +4,7 @@ import { KeeperConfig } from "../config.js";
 export type SolanaContext = {
   connection: Connection;
   keeperKeypair: Keypair;
-  vaultProgramId: PublicKey;
+  programId: PublicKey;
 };
 
 export const createSolanaContext = (config: KeeperConfig): SolanaContext => {
@@ -16,6 +16,6 @@ export const createSolanaContext = (config: KeeperConfig): SolanaContext => {
   return {
     connection,
     keeperKeypair,
-    vaultProgramId: new PublicKey(config.vaultProgramId),
+    programId: new PublicKey(config.programId),
   };
 };

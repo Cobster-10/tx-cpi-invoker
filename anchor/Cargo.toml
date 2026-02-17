@@ -5,6 +5,10 @@ resolver = "2"
 [patch.crates-io]
 stork-solana-sdk = { path = "vendor/stork-solana-sdk" }
 
+# Pin blake3 to 1.8.2: 1.8.3+ requires Cargo edition2024 (not yet stabilized)
+[patch.crates-io]
+blake3 = { git = "https://github.com/BLAKE3-team/BLAKE3", tag = "1.8.2" }
+
 [profile.release]
 overflow-checks = true
 lto = "fat"
