@@ -1,0 +1,40 @@
+// Deploy order_executor Anchor program to Surfnet
+// Run from project root: surfpool run deployment
+// Ensure anchor build has been run first (anchor/target/deploy/ must exist)
+
+addon "svm" {
+  network_id = input.network_id
+  rpc_api_url = input.rpc_api_url
+}
+
+signer "authority" "svm::secret_key" {
+  keypair_json = input.payer
+}
+
+// Paths relative to project root (where txtx.yml lives).
+// Anchor project is in anchor/ subfolder.
+variable "program" {
+  value = svm::get_program_from_anchor_project(
+    "order_executor",
+    keypair_path = "anchor/target/deploy/order_executor-keypair.json",
+    idl_path = "anchor/target/idl/order_executor.json",
+    bin_path = "anchor/target/deploy/order_executor.so"
+  )
+}
+
+action "deploy" "svm::deploy_program" {
+  description = "Deploy order_executor program to Surfnet"
+  program = variable.program
+  authority = signer.authority
+  payer = signer.authority
+}
+
+output "program_id" {
+  description = "Deployed program ID"
+  value = action.deploy.program_id
+}
+
+output "signatures" {
+  description = "Deployment transaction signatures"
+  value = action.deploy.signatures
+}

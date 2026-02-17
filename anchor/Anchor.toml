@@ -7,6 +7,12 @@ skip-lint = false
 [programs.devnet]
 order_executor = "3p8QPys3SHaEyf4szGgcoF4x2FbGaT3uTgZibLity5hi"
 
+[programs.localnet]
+order_executor = "3p8QPys3SHaEyf4szGgcoF4x2FbGaT3uTgZibLity5hi"
+
+[test]
+startup_wait = 10000
+
 [registry]
 url = "https://api.apr.dev"
 

@@ -8,6 +8,7 @@
   "scripts": {
     "anchor-build": "cd anchor && anchor build",
     "anchor-test": "cd anchor && anchor test --skip-deploy",
+    "anchor-test-ts": "cd anchor && npm run test",
     "codama:js": "codama run js",
     "web:dev": "npm --prefix apps/web run dev",
     "web:build": "npm --prefix apps/web run build",

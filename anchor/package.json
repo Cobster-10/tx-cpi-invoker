@@ -1,0 +1,22 @@
+{
+  "name": "order-executor-tests",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": {
+    "test": "mocha -r ts-node/register --extensions ts 'tests/**/*.ts'",
+    "test:surfpool": "echo 'Run in two terminals: 1) surfpool start --legacy-anchor-compatibility  2) ANCHOR_PROVIDER_URL=http://127.0.0.1:8899 npm run test'"
+  },
+  "dependencies": {
+    "@coral-xyz/anchor": "^0.31.1",
+    "@solana/web3.js": "^1.98.4"
+  },
+  "devDependencies": {
+    "@types/chai": "^4.3.0",
+    "@types/mocha": "^10.0.0",
+    "@types/node": "^20.0.0",
+    "chai": "^4.3.0",
+    "mocha": "^10.0.0",
+    "ts-node": "^10.9.0",
+    "typescript": "^5.0.0"
+  }
+}
