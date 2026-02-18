@@ -44,3 +44,13 @@ See:
 
 - `anchor/programs/order_executor/ARCHITECTURE.md`
 - `services/keeper/ARCHITECTURE.md`
+
+## Cursor Worktree Apply Error
+
+If you get `EACCES: permission denied, mkdir '/home/CODE'` when using **Apply worktree**, it's a known Cursor path-resolution bug. Use this instead:
+
+```bash
+./scripts/sync-from-worktree.sh
+```
+
+Or merge via git: `git checkout main && git merge <worktree-branch>`

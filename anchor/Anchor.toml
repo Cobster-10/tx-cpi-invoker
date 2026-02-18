@@ -5,13 +5,10 @@ resolution = true
 skip-lint = false
 
 [programs.devnet]
-order_executor = "3p8QPys3SHaEyf4szGgcoF4x2FbGaT3uTgZibLity5hi"
+order_executor = "2f2ph1Sgi14dAfKwYXNb5XPuAhuokWCW5WNLyfiQXKc2"
 
 [programs.localnet]
 order_executor = "3p8QPys3SHaEyf4szGgcoF4x2FbGaT3uTgZibLity5hi"
-
-[test]
-startup_wait = 10000
 
 [registry]
 url = "https://api.apr.dev"
@@ -22,3 +19,8 @@ wallet = "~/.config/solana/id.json"
 
 [scripts]
 test = "cargo test"
+
+[test]
+startup_wait = 10000
+shutdown_wait = 2000
+upgradeable = false

@@ -1,21 +1,20 @@
 version: "1"
 
-# This tells Surfpool which runbook to use if you just type 'surfpool run'
+# Default runbook when you run 'surfpool run'
 main: deployment
 
 environments:
   localnet:
-    rpc_url: "http://127.0.0.1:8899"
+    network_id: localnet
+    rpc_api_url: "http://127.0.0.1:8899"
+    payer: "~/.config/solana/id.json"
+  devnet:
+    network_id: devnet
+    rpc_api_url: "https://api.devnet.solana.com"
     payer: "~/.config/solana/id.json"
 
 runbooks:
   - id: deployment
-    name: "Deploy My Anchor Program"
-    description: "Builds and deploys the program to Surfnet"
-    tasks:
-      - id: deploy_program
-        action: solana::deploy_program
-        args:
-          # Double check this path relative to where you run the command!
-          program_path: "./anchor/target/deploy/order_executor.so"
-          program_id: "3p8QPys3SHaEyf4szGgcoF4x2FbGaT3uTgZibLity5hi"
+    name: "Deploy order_executor"
+    description: "Deploy the order_executor Anchor program to Surfnet"
+    location: ./deployment

@@ -1,0 +1,40 @@
+################################################################
+# Manage anchor deployment through Crypto Infrastructure as Code
+################################################################
+
+addon "svm" {
+    rpc_api_url = input.rpc_api_url
+    network_id = input.network_id
+}
+
+action "deploy_order_executor" "svm::deploy_program" {
+    description = "Deploy order_executor program"
+    program = svm::get_program_from_anchor_project("order_executor") 
+    authority = signer.authority
+    payer = signer.payer
+    // Optional: if you want to deploy the program via a cheatcode when targeting a Surfnet, set `instant_surfnet_deployment = true`
+    // Deploying via a cheatcode will write the program data directly to the program account, rather than sending transactions.
+    // This will make deployments instantaneous, but is deviating from how the deployments will take place on devnet/mainnet.
+    // instant_surfnet_deployment = true
+}
+
+action "index_order_pda" "svm::deploy_subgraph" {
+    program_id= action.deploy_order_executor.program_id
+    program_idl = action.deploy_order_executor.program_idl
+    block_height = action.deploy_order_executor.block_height
+    pda {
+        // The type for the order PDA should be "Order", matching the corresponding account struct in the IDL/program.
+        type = "Order"
+        instruction {
+            name="create_order"
+            account_name="order"
+        }
+        instruction{
+            name="execute_order_if_ready"
+            account_name="order"
+        }
+        field{
+            
+        }
+    }
+}

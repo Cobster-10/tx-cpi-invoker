@@ -1,5 +1,6 @@
 import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
+import BN from "bn.js";
 import { PublicKey, Keypair, SystemProgram } from "@solana/web3.js";
 import { expect } from "chai";
 import * as fs from "fs";
@@ -74,12 +75,12 @@ describe("order_executor", () => {
         .signers([user])
         .rpc();
 
-      const inputAmount = new anchor.BN(LAMPORTS_PER_SOL.toString());
-      const executionBounty = new anchor.BN(10_000_000);
+      const inputAmount = new BN(LAMPORTS_PER_SOL.toString());
+      const executionBounty = new BN(10_000_000);
 
       // 2. Create order with TimeAfter trigger and system program action (no-op CPI)
       const trigger = {
-        timeAfter: { slot: new anchor.BN(0) },
+        timeAfter: { slot: new BN(0) },
       };
 
       const action = {
