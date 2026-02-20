@@ -15,7 +15,124 @@ import * as path from "path";
 const idlPath = path.join(process.cwd(), "target/idl/order_executor.json");
 const idl = JSON.parse(fs.readFileSync(idlPath, "utf8"));
 
-describe("order_executor", () => {
+/** Helper: init user counter + create order with 1 SOL transfer to recipient. Returns PDAs. Reusable across test files. */
+export async function createOrderWithTransferSetup(
+  program: Program,
+  user: Keypair,
+  recipient: PublicKey,
+  lamportsPerSol: bigint
+) {
+  const [orderCounterPda] = PublicKey.findProgramAddressSync(
+    [Buffer.from("order_counter"), user.publicKey.toBuffer()],
+    program.programId
+  );
+
+  const [orderPda] = PublicKey.findProgramAddressSync(
+    [Buffer.from("order"), user.publicKey.toBuffer(), Buffer.alloc(8, 0)],
+    program.programId
+  );
+
+  const [vaultPda] = PublicKey.findProgramAddressSync(
+    [Buffer.from("vault"), user.publicKey.toBuffer(), Buffer.alloc(8, 0)],
+    program.programId
+  );
+
+  await program.methods
+    .initUserCounter()
+    .accounts({
+      user: user.publicKey,
+      orderCounter: orderCounterPda,
+      systemProgram: SystemProgram.programId,
+    })
+    .signers([user])
+    .rpc();
+
+  const inputAmount = new BN((2n * lamportsPerSol).toString());
+  const executionBounty = new BN(10_000_000);
+  const trigger = { timeAfter: { slot: new BN(0) } };
+  const transferIx = SystemProgram.transfer({
+    fromPubkey: vaultPda,
+    toPubkey: recipient,
+    lamports: Number(lamportsPerSol),
+  });
+  const action = {
+    programId: SystemProgram.programId,
+    accounts: [
+      { pubkey: vaultPda, isWritable: true },
+      { pubkey: recipient, isWritable: true },
+    ],
+    data: Buffer.from(transferIx.data),
+  };
+
+  await program.methods
+    .createOrder(inputAmount, trigger, action, null, executionBounty)
+    .accounts({
+      user: user.publicKey,
+      orderCounter: orderCounterPda,
+      order: orderPda,
+      vault: vaultPda,
+      systemProgram: SystemProgram.programId,
+    })
+    .signers([user])
+    .rpc();
+
+  return { orderCounterPda, orderPda, vaultPda };
+}
+
+/** Create an order without init (user must already have order_counter). Use for order_id 1, 2, etc. */
+async function createOrderOnly(
+  program: Program,
+  user: Keypair,
+  recipient: PublicKey,
+  orderCounterPda: PublicKey,
+  lamportsPerSol: bigint
+) {
+  const orderId1 = Buffer.alloc(8);
+  orderId1.writeBigUInt64LE(1n);
+  const [orderPda1] = PublicKey.findProgramAddressSync(
+    [Buffer.from("order"), user.publicKey.toBuffer(), orderId1],
+    program.programId
+  );
+  const [vaultPda1] = PublicKey.findProgramAddressSync(
+    [Buffer.from("vault"), user.publicKey.toBuffer(), orderId1],
+    program.programId
+  );
+
+  const inputAmount = new BN((2n * lamportsPerSol).toString());
+  const executionBounty = new BN(10_000_000);
+  const trigger = { timeAfter: { slot: new BN(0) } };
+  const transferIx = SystemProgram.transfer({
+    fromPubkey: vaultPda1,
+    toPubkey: recipient,
+    lamports: Number(lamportsPerSol),
+  });
+  const action = {
+    programId: SystemProgram.programId,
+    accounts: [
+      { pubkey: vaultPda1, isWritable: true },
+      { pubkey: recipient, isWritable: true },
+    ],
+    data: Buffer.from(transferIx.data),
+  };
+
+  await program.methods
+    .createOrder(inputAmount, trigger, action, null, executionBounty)
+    .accounts({
+      user: user.publicKey,
+      orderCounter: orderCounterPda,
+      order: orderPda1,
+      vault: vaultPda1,
+      systemProgram: SystemProgram.programId,
+    })
+    .signers([user])
+    .rpc();
+
+  return { orderPda: orderPda1, vaultPda: vaultPda1 };
+}
+
+describe("order_executor", function () {
+  this.timeout(30_000); // RPC calls (airdrop, confirm) can take several seconds
+
   const provider = anchor.AnchorProvider.env();
   anchor.setProvider(provider);
 
@@ -45,91 +162,27 @@ describe("order_executor", () => {
     }
   });
 
+  let orderPda: PublicKey;
+  let orderCounterPda: PublicKey;
+  let vaultPda: PublicKey;
+
+  // create the order with cpi transfer of 1 SOL to the default solana pubkey
+  before(async () => {
+    const recipient = provider.wallet.publicKey;
+    const pdas = await createOrderWithTransferSetup(
+      program,
+      user,
+      recipient,
+      LAMPORTS_PER_SOL
+    );
+    orderPda = pdas.orderPda;
+    orderCounterPda = pdas.orderCounterPda;
+    vaultPda = pdas.vaultPda;
+  });
+
   describe("create_order", () => {
     it("initializes user counter and creates order successfully", async () => {
-      const [orderCounterPda] = PublicKey.findProgramAddressSync(
-        [Buffer.from("order_counter"), user.publicKey.toBuffer()],
-        program.programId
-      );
-
-      const [orderPda] = PublicKey.findProgramAddressSync(
-        [
-          Buffer.from("order"),
-          user.publicKey.toBuffer(),
-          Buffer.alloc(8, 0), // order_id 0
-        ],
-        program.programId
-      );
-
-      const [vaultPda] = PublicKey.findProgramAddressSync(
-        [
-          Buffer.from("vault"),
-          user.publicKey.toBuffer(),
-          Buffer.alloc(8, 0),
-        ],
-        program.programId
-      );
-
-      // 1. Init user counter
-      await program.methods
-        .initUserCounter()
-        .accounts({
-          user: user.publicKey,
-          orderCounter: orderCounterPda,
-          systemProgram: SystemProgram.programId,
-        })
-        .signers([user])
-        .rpc();
-
-      // Need enough for: 1 SOL transfer + execution bounty
-      const inputAmount = new BN((2n * LAMPORTS_PER_SOL).toString());
-      const executionBounty = new BN(10_000_000);
-
-      
-
-      // 2. Create order with TimeAfter trigger and System Program transfer (1 SOL to recipient)
-      const trigger = {
-        timeAfter: { slot: new BN(0) },
-      };
-
-      // Recipient: Solana CLI config wallet (provider.wallet = ANCHOR_WALLET)
-      const recipient = provider.wallet.publicKey;
-      const transferAmount = LAMPORTS_PER_SOL; // 1 SOL
-
-      const transferIx = SystemProgram.transfer({
-        fromPubkey: vaultPda,
-        toPubkey: recipient,
-        lamports: Number(transferAmount),
-      });
-
-      const action = {
-        programId: SystemProgram.programId,
-        accounts: [
-          { pubkey: vaultPda, isWritable: true },
-          { pubkey: recipient, isWritable: true },
-        ],
-        data: Buffer.from(transferIx.data),
-      };
-
-      await program.methods
-        .createOrder(
-          inputAmount,
-          trigger,
-          action,
-          null, // expires_slot
-          executionBounty
-        )
-        .accounts({
-          user: user.publicKey,
-          orderCounter: orderCounterPda,
-          order: orderPda,
-          vault: vaultPda,
-          systemProgram: SystemProgram.programId,
-        })
-        .signers([user])
-        .rpc();
-
-      // Verify order account
+      // Verify order account (setup ran in before)
       const orderAccount = await (program.account as any).order.fetch(orderPda);
       expect(orderAccount.user.equals(user.publicKey)).to.be.true;
       expect(orderAccount.orderId.toNumber()).to.equal(0);
@@ -186,18 +239,7 @@ describe("order_executor", () => {
       console.log("keeper balance", keeperBalanceBefore);
       expect(keeperBalanceBefore).to.equal(10 * Number(LAMPORTS_PER_SOL));
 
-      
-
-      const [orderPda] = PublicKey.findProgramAddressSync(
-        [Buffer.from("order"), user.publicKey.toBuffer(), Buffer.alloc(8, 0)],
-        program.programId
-      );
-
-      const [vaultPda] = PublicKey.findProgramAddressSync(
-        [Buffer.from("vault"), user.publicKey.toBuffer(), Buffer.alloc(8, 0)],
-        program.programId
-      );
-
+      // orderPda, vaultPda from shared before hook (createOrderWithTransferSetup)
       // check the vault balance (2 SOL + rent-exempt min for 0-byte account ~890880)
       const vaultBalance = await provider.connection.getBalance(vaultPda);
       console.log("vault balance", vaultBalance);
@@ -267,6 +309,60 @@ describe("order_executor", () => {
       expect(keeperBalanceAfter).to.be.at.least(Number(keeperBalanceBefore) + Number(orderAccount.executionBounty?.toString()));
 
       
+    });
+  });
+
+
+
+  describe("cancel_order", () => {
+    // Create order 1 (order_counter already exists from root before; order 0 was created + executed)
+    before(async () => {
+      const recipient = provider.wallet.publicKey;
+      const pdas = await createOrderOnly(
+        program,
+        user,
+        recipient,
+        orderCounterPda,
+        LAMPORTS_PER_SOL
+      );
+      orderPda = pdas.orderPda;
+      vaultPda = pdas.vaultPda;
+    });
+    
+    // cancel the order with order id 1
+    it("cancels order with order id 1 successfully", async () => {
+
+
+      const userBalanceBefore = await provider.connection.getBalance(user.publicKey);
+      console.log("user balance before", userBalanceBefore);
+
+
+      // cancel the order with order id 1
+      const cancelIx = await program.methods
+        .cancelOrder(new BN(1))
+        .accounts({
+          order: orderPda,
+          vault: vaultPda,
+          user: user.publicKey,
+        })
+        .signers([user])
+        .instruction();
+
+      const tx = new Transaction().add(cancelIx);
+      tx.feePayer = user.publicKey;
+      await sendAndConfirmTransaction(provider.connection, tx, [user], {
+        preflightCommitment: "confirmed",
+      });
+
+      // verify the order pda is in the right state
+      const orderAccount = await (program.account as any).order.fetch(orderPda);
+      expect(orderAccount.canceled).to.be.true;
+
+      //verify the user balance has increased by more than 1 SOL (refund + tx fee)
+      const userBalanceAfter = await provider.connection.getBalance(user.publicKey);
+      console.log("user balance after", userBalanceAfter);
+      expect(userBalanceAfter).to.be.at.least(userBalanceBefore + Number(LAMPORTS_PER_SOL));
+
     });
   });
 });
