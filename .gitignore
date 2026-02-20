@@ -11,6 +11,7 @@
 !.yarn/plugins
 !.yarn/releases
 !.yarn/versions
+/anchor/node_modules
 
 # testing
 /coverage

@@ -581,7 +581,7 @@ pub struct CreateOrder<'info> {
         bump
     )]
     pub order: Account<'info, Order>,
-    
+
     #[account(
         init,
         payer = user,
@@ -600,6 +600,7 @@ pub struct CreateOrder<'info> {
 pub struct ExecuteOrder<'info> {
     #[account(mut, has_one = user @ OrderError::Unauthorized)]
     pub order: Account<'info, Order>,
+    
     #[account(
         mut,
         owner = anchor_lang::system_program::ID,

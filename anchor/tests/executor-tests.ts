@@ -1,7 +1,13 @@
 import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
 import BN from "bn.js";
-import { PublicKey, Keypair, SystemProgram } from "@solana/web3.js";
+import {
+  PublicKey,
+  Keypair,
+  SystemProgram,
+  Transaction,
+  sendAndConfirmTransaction,
+} from "@solana/web3.js";
 import { expect } from "chai";
 import * as fs from "fs";
 import * as path from "path";
@@ -75,18 +81,34 @@ describe("order_executor", () => {
         .signers([user])
         .rpc();
 
-      const inputAmount = new BN(LAMPORTS_PER_SOL.toString());
+      // Need enough for: 1 SOL transfer + execution bounty
+      const inputAmount = new BN((2n * LAMPORTS_PER_SOL).toString());
       const executionBounty = new BN(10_000_000);
 
-      // 2. Create order with TimeAfter trigger and system program action (no-op CPI)
+      
+
+      // 2. Create order with TimeAfter trigger and System Program transfer (1 SOL to recipient)
       const trigger = {
         timeAfter: { slot: new BN(0) },
       };
 
+      // Recipient: Solana CLI config wallet (provider.wallet = ANCHOR_WALLET)
+      const recipient = provider.wallet.publicKey;
+      const transferAmount = LAMPORTS_PER_SOL; // 1 SOL
+
+      const transferIx = SystemProgram.transfer({
+        fromPubkey: vaultPda,
+        toPubkey: recipient,
+        lamports: Number(transferAmount),
+      });
+
       const action = {
         programId: SystemProgram.programId,
-        accounts: [],
-        data: Buffer.from([]),
+        accounts: [
+          { pubkey: vaultPda, isWritable: true },
+          { pubkey: recipient, isWritable: true },
+        ],
+        data: Buffer.from(transferIx.data),
       };
 
       await program.methods
@@ -112,7 +134,7 @@ describe("order_executor", () => {
       expect(orderAccount.user.equals(user.publicKey)).to.be.true;
       expect(orderAccount.orderId.toNumber()).to.equal(0);
       expect(orderAccount.inputAmount.toString()).to.equal(
-        LAMPORTS_PER_SOL.toString()
+        (2n * LAMPORTS_PER_SOL).toString()
       );
       expect(orderAccount.executed).to.be.false;
       expect(orderAccount.canceled).to.be.false;
@@ -120,7 +142,7 @@ describe("order_executor", () => {
       // Verify vault has lamports
       const vaultAccount = await provider.connection.getAccountInfo(vaultPda);
       expect(vaultAccount).to.not.be.null;
-      expect(vaultAccount!.lamports).to.be.at.least(Number(LAMPORTS_PER_SOL));
+      expect(vaultAccount!.lamports).to.be.at.least(Number(2n * LAMPORTS_PER_SOL));
 
       // Verify counter incremented
       const counterAccount = await (
@@ -128,6 +150,123 @@ describe("order_executor", () => {
       ).userOrderCounter.fetch(orderCounterPda);
       expect(counterAccount.nextOrderId.toNumber()).to.equal(1);
       expect(counterAccount.openOrderCount.toNumber()).to.equal(1);
+    });
+  });
+
+  // create the keeper account
+
+  let keeper: Keypair;
+  let latestBlockHash: any;
+
+  before(async () => {
+    // create the keeper account before tests run
+    latestBlockHash = await provider.connection.getLatestBlockhash();
+    keeper = Keypair.generate();
+    const sig = await provider.connection.requestAirdrop(
+      keeper.publicKey,
+      10 * Number(LAMPORTS_PER_SOL)
+    );
+    await provider.connection.confirmTransaction({
+      signature: sig,
+      blockhash: latestBlockHash.blockhash,
+      lastValidBlockHeight: latestBlockHash.lastValidBlockHeight,
+    });
+  });
+ 
+
+  describe("execute_order_if_ready", () => {
+    it("executes order if ready successfully", async () => {
+      
+      const recipient = provider.wallet.publicKey;
+      const recipientBalanceBefore = await provider.connection.getBalance(recipient);
+      console.log("recipient (CLI wallet) balance before", recipientBalanceBefore);
+
+
+      const keeperBalanceBefore = await provider.connection.getBalance(keeper.publicKey);
+      console.log("keeper balance", keeperBalanceBefore);
+      expect(keeperBalanceBefore).to.equal(10 * Number(LAMPORTS_PER_SOL));
+
+      
+
+      const [orderPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("order"), user.publicKey.toBuffer(), Buffer.alloc(8, 0)],
+        program.programId
+      );
+
+      const [vaultPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("vault"), user.publicKey.toBuffer(), Buffer.alloc(8, 0)],
+        program.programId
+      );
+
+      // check the vault balance (2 SOL + rent-exempt min for 0-byte account ~890880)
+      const vaultBalance = await provider.connection.getBalance(vaultPda);
+      console.log("vault balance", vaultBalance);
+      const expectedVaultBalance = Number(2n * LAMPORTS_PER_SOL) + 890880; // 2 SOL + rent
+      expect(vaultBalance).to.equal(expectedVaultBalance);
+
+      // CPI remaining_accounts: [vault, recipient, system_program] per CpiAction layout
+      // User pays the tx fee (not recipient); build tx with user as fee payer
+      const executeIx = await program.methods
+        .executeOrderIfReady()
+        .accounts({
+          order: orderPda,
+          vault: vaultPda,
+          user: user.publicKey,
+          keeper: keeper.publicKey,
+          pdaAccount: SystemProgram.programId, // placeholder for TimeAfter trigger
+          systemProgram: SystemProgram.programId,
+        })
+        .remainingAccounts([
+          { pubkey: vaultPda, isWritable: true, isSigner: false },
+          { pubkey: provider.wallet.publicKey, isWritable: true, isSigner: false },
+          { pubkey: SystemProgram.programId, isWritable: false, isSigner: false },
+        ])
+        .instruction();
+
+      const tx = new Transaction().add(executeIx);
+      tx.feePayer = user.publicKey;
+      await sendAndConfirmTransaction(provider.connection, tx, [user, keeper], {
+        preflightCommitment: "confirmed",
+      });
+
+
+      // verifications 
+
+       
+      // verify the order pda is in the right state
+      const orderAccount = await (program.account as any).order.fetch(orderPda);
+      // Log all fields from the order PDA account
+      console.log("Order PDA fields:");
+      console.log("user:", orderAccount.user.toBase58());
+      console.log("order_id:", orderAccount.orderId?.toString());
+      console.log("input_amount:", orderAccount.inputAmount?.toString());
+      console.log("trigger:", orderAccount.trigger);
+      console.log("action:", orderAccount.action);
+      console.log("created_slot:", orderAccount.createdSlot?.toString());
+      console.log("expires_slot:", orderAccount.expiresSlot ? orderAccount.expiresSlot.toString() : null);
+      console.log("executed:", orderAccount.executed);
+      console.log("canceled:", orderAccount.canceled);
+      console.log("execution_bounty:", orderAccount.executionBounty?.toString());
+      expect(orderAccount.executed).to.be.true;
+
+
+      // verify vault decreased by 1 SOL (transfer) + execution bounty
+      const vaultBalanceAfter = await provider.connection.getBalance(vaultPda);
+      console.log("vault balance", vaultBalanceAfter);
+      const bounty = Number(orderAccount.executionBounty?.toString() ?? 0);
+      expect(vaultBalanceAfter).to.equal(vaultBalance - Number(LAMPORTS_PER_SOL) - bounty);
+
+      // verify the recipient received exactly 1 SOL (user pays tx fee, not recipient)
+      const recipientBalanceAfter = await provider.connection.getBalance(recipient);
+      console.log("recipient (CLI wallet) balance after", recipientBalanceAfter);
+      expect(recipientBalanceAfter).to.equal(recipientBalanceBefore + Number(LAMPORTS_PER_SOL));
+
+      // verify the keeper balance has increased by the execution bounty
+      const keeperBalanceAfter = await provider.connection.getBalance(keeper.publicKey);
+      console.log("keeper balance after", keeperBalanceAfter);
+      expect(keeperBalanceAfter).to.be.at.least(Number(keeperBalanceBefore) + Number(orderAccount.executionBounty?.toString()));
+
+      
     });
   });
 });

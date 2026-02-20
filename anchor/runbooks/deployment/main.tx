@@ -18,6 +18,7 @@ action "deploy_order_executor" "svm::deploy_program" {
     // instant_surfnet_deployment = true
 }
 
+/* 
 action "index_order_pda" "svm::deploy_subgraph" {
     program_id= action.deploy_order_executor.program_id
     program_idl = action.deploy_order_executor.program_idl
@@ -38,3 +39,4 @@ action "index_order_pda" "svm::deploy_subgraph" {
         }
     }
 }
+*/
