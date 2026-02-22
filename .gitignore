@@ -2,6 +2,7 @@
 
 # dependencies
 /node_modules
+/anchor/node_modules
 /apps/web/node_modules
 /services/keeper/node_modules
 /.pnp
