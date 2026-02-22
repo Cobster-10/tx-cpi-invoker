@@ -2,13 +2,23 @@
 
 An on-chain Solana program that executes user-specified CPIs when trigger conditions are met, built with [Anchor](https://www.anchor-lang.com/).
 
-## Pre-deployed Program
+## Program IDs (Configured)
 
-The program is deployed on **devnet** at:
+Program IDs in this repo are configured in:
 
+- `/Users/nitishmalluru/Developer/tx-cpi-invoker/anchor/Anchor.toml`
+- `/Users/nitishmalluru/Developer/tx-cpi-invoker/anchor/programs/order_executor/src/lib.rs` (`declare_id!`)
+
+Check current configured IDs:
+
+```bash
+cd /Users/nitishmalluru/Developer/tx-cpi-invoker/anchor
+rg -n 'order_executor = \"|declare_id!' Anchor.toml programs/order_executor/src/lib.rs
 ```
-3p8QPys3SHaEyf4szGgcoF4x2FbGaT3uTgZibLity5hi
-```
+
+Important:
+- The local program ID can change if you run `anchor keys sync`.
+- Keep `Anchor.toml`, `declare_id!`, and the built IDL in sync before deploying/testing.
 
 ## Deploying Your Own Program
 
@@ -25,12 +35,22 @@ solana-keygen new -o target/deploy/order_executor-keypair.json
 solana address -k target/deploy/order_executor-keypair.json
 ```
 
-### 3. Update the program ID
+### 3. Update the program ID (or sync from keypair)
 
 Update the program ID in these files:
 
 - `anchor/Anchor.toml` - Update `order_executor = "..."` under `[programs.devnet]`
 - `anchor/programs/order_executor/src/lib.rs` - Update `declare_id!("...")`
+
+Recommended for local development:
+
+```bash
+cd /Users/nitishmalluru/Developer/tx-cpi-invoker/anchor
+anchor keys sync
+anchor build
+```
+
+This syncs the configured program IDs with `target/deploy/order_executor-keypair.json` and regenerates the IDL.
 
 ### 4. Build and deploy
 
@@ -63,3 +83,8 @@ The order executor program allows users to:
 ```bash
 anchor test --skip-deploy
 ```
+
+For Surfpool-based integration testing (recommended for this repo), see:
+
+- `/Users/nitishmalluru/Developer/tx-cpi-invoker/anchor/SURFPOOL_DOCS.md`
+- `/Users/nitishmalluru/Developer/tx-cpi-invoker/anchor/tests/README.md`

@@ -71,7 +71,8 @@ Important components inside:
   - same program ID resolution fix as `basic_tests.ts`
 
 Time handling in this suite:
-- uses Surfpool clock cheatcodes (`surfnet_getClock`, `surfnet_advanceClock`) via the shared helper
+- uses Surfpool clock cheatcodes (`surfnet_getClock`, `surfnet_advanceClock`) via the shared helper when available
+- falls back to RPC block time / compatible time travel payloads / sleep for older Surfpool builds
 - avoids host `Date.now()` for stale/fresh oracle timing checks
 
 ### `helpers/surfpool.ts`
@@ -124,7 +125,7 @@ References:
 - `/Users/nitishmalluru/Developer/tx-cpi-invoker/anchor/package.json`
 
 ### Config fix that unblocked Surfpool execution
-- Aligned `anchor/Anchor.toml` localnet `order_executor` with the program's declared ID (`2f2ph1...`).
+- Aligned `anchor/Anchor.toml` localnet `order_executor` with the program's declared ID (current value may change after `anchor keys sync`).
 
 Reference:
 - `/Users/nitishmalluru/Developer/tx-cpi-invoker/anchor/Anchor.toml`
@@ -215,7 +216,8 @@ curl -s http://127.0.0.1:8899 -H 'Content-Type: application/json' \
 ### 5) Verify the program is deployed and executable on Surfpool
 
 ```bash
-solana program show 2f2ph1Sgi14dAfKwYXNb5XPuAhuokWCW5WNLyfiQXKc2 --url http://127.0.0.1:8899
+LOCALNET_PROGRAM_ID=$(awk '/^\[programs\.localnet\]/{f=1;next} /^\[/{f=0} f && /order_executor/{gsub(/.*"/,""); gsub(/".*/,""); print; exit}' Anchor.toml)
+solana program show "$LOCALNET_PROGRAM_ID" --url http://127.0.0.1:8899
 ```
 
 ### 6) Run preflight (recommended)

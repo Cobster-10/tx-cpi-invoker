@@ -50,7 +50,8 @@ Fix: align `anchor/Anchor.toml` localnet `order_executor` with the program's dec
 Even if `surfnet_getSurfnetInfo` returns success, always verify the program exists and is executable:
 
 ```bash
-solana program show 2f2ph1Sgi14dAfKwYXNb5XPuAhuokWCW5WNLyfiQXKc2 --url http://127.0.0.1:8899
+LOCALNET_PROGRAM_ID=$(awk '/^\[programs\.localnet\]/{f=1;next} /^\[/{f=0} f && /order_executor/{gsub(/.*"/,""); gsub(/".*/,""); print; exit}' Anchor.toml)
+solana program show "$LOCALNET_PROGRAM_ID" --url http://127.0.0.1:8899
 ```
 
 ### 4) Synthetic Stork feed seeding is the right first integration test
@@ -121,7 +122,8 @@ curl -s http://127.0.0.1:8899 -H 'Content-Type: application/json' \
 ### 5) Verify the program is deployed/executable on Surfpool
 
 ```bash
-solana program show 2f2ph1Sgi14dAfKwYXNb5XPuAhuokWCW5WNLyfiQXKc2 --url http://127.0.0.1:8899
+LOCALNET_PROGRAM_ID=$(awk '/^\[programs\.localnet\]/{f=1;next} /^\[/{f=0} f && /order_executor/{gsub(/.*"/,""); gsub(/".*/,""); print; exit}' Anchor.toml)
+solana program show "$LOCALNET_PROGRAM_ID" --url http://127.0.0.1:8899
 ```
 
 Expected signal:
@@ -172,7 +174,7 @@ The program still runs locally. Surfpool may fetch remote state as needed.
 ## Verification Checklist (Use This Every Time)
 
 1. Surfpool RPC responds to `surfnet_getSurfnetInfo` or `surfnet_getSurfnetInfos`.
-2. Program account exists on `127.0.0.1:8899` at `2f2ph1...`.
+2. Program account exists on `127.0.0.1:8899` at the `order_executor` localnet ID from `Anchor.toml`.
 3. Program account is executable (`solana program show` succeeds).
 4. `anchor build` completed recently (IDL and `.so` are current).
 5. Stork Surfpool suite returns `7 passing`.
@@ -188,7 +190,8 @@ This usually means one of:
 Check:
 
 ```bash
-solana program show 2f2ph1Sgi14dAfKwYXNb5XPuAhuokWCW5WNLyfiQXKc2 --url http://127.0.0.1:8899
+LOCALNET_PROGRAM_ID=$(awk '/^\[programs\.localnet\]/{f=1;next} /^\[/{f=0} f && /order_executor/{gsub(/.*"/,""); gsub(/".*/,""); print; exit}' Anchor.toml)
+solana program show "$LOCALNET_PROGRAM_ID" --url http://127.0.0.1:8899
 ```
 
 If missing, restart Surfpool from `anchor/` and verify auto-deploy logs.
@@ -236,7 +239,7 @@ See:
 - Added Surfpool cheatcode detection for both `surfnet_getSurfnetInfo` and `surfnet_getSurfnetInfos`.
 - Added explicit skip warning text when Surfpool cheatcodes are unavailable.
 - Updated synthetic Stork feed seeding to use documented `surfnet_setAccount` payload shape first, with fallback to legacy positional payload.
-- Converted Stork test timestamps/staleness checks to Surfpool clock control (`surfnet_getClock` / `surfnet_advanceClock` fallback).
+- Converted Stork test timestamps/staleness checks to Surfpool clock control when available, with compatibility fallbacks for older Surfpool builds.
 - Resolved program ID from `Anchor.toml` based on RPC endpoint in tests.
 
 See:
@@ -245,7 +248,7 @@ See:
 - `/Users/nitishmalluru/Developer/tx-cpi-invoker/anchor/tests/basic_tests.ts`
 
 ### Config / Scripts
-- Aligned `anchor/Anchor.toml` localnet `order_executor` to the declared program ID (`2f2ph1...`).
+- Aligned `anchor/Anchor.toml` localnet `order_executor` to the program's declared ID (current value may change after `anchor keys sync`).
 - Added `anchor/Surfpool.toml` manifest for reproducible Surfpool startup.
 - Added `anchor/scripts/surfpool-preflight.sh` to verify Surfpool RPC + deployed program before running tests.
 - Changed Anchor TS test scripts to use `ts-node/register/transpile-only`.
