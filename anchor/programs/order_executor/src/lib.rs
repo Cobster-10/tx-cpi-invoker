@@ -4,7 +4,7 @@ use anchor_lang::system_program::{transfer, Transfer};
 #[cfg(test)]
 mod tests;
 
-declare_id!("2f2ph1Sgi14dAfKwYXNb5XPuAhuokWCW5WNLyfiQXKc2");
+declare_id!("5992aQmSRbEbah48narXCRBUwsdv3sSoCC9bKGeYoNjT");
 
 use stork_solana_sdk::{pda::STORK_FEED_SEED, temporal_numeric_value::TemporalNumericValueFeed};
 

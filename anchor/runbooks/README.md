@@ -1,4 +1,4 @@
-# anchor Runbooks
+# order_executor_local Runbooks
 
 [![Surfpool](https://img.shields.io/badge/Operated%20with-Surfpool-gree?labelColor=gray)](https://surfpool.run)
 
@@ -22,17 +22,6 @@ Surfpool installer:
 
 ```console
 curl -sL https://run.surfpool.run/ | bash
-```
-
-Install pre-built binaries:
-
-```console
-# macOS (Homebrew)
-brew install txtx/taps/surfpool
-
-# Updating surfpool for Homebrew users
-brew tap txtx/taps
-brew reinstall surfpool
 ```
 
 Install from source:

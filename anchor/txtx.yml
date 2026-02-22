@@ -1,6 +1,6 @@
 ---
-name: anchor
-id: anchor
+name: order_executor_local
+id: orderexecutorlocal
 runbooks:
   - name: deployment
     description: Deploy programs

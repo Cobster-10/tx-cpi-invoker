@@ -6,9 +6,16 @@ import { expect } from "chai";
 import * as fs from "fs";
 import * as path from "path";
 import { Keypair, PublicKey, SystemProgram } from "@solana/web3.js";
+import {
+  advanceSurfnetClockSeconds,
+  getSurfnetUnixTimestampNs,
+  hasSurfpoolCheatcodes,
+  surfnetSetAccount,
+} from "./helpers/surfpool";
 
 const idlPath = path.join(process.cwd(), "target/idl/order_executor.json");
 const idl = JSON.parse(fs.readFileSync(idlPath, "utf8"));
+const anchorTomlPath = path.join(process.cwd(), "Anchor.toml");
 
 const STORK_PROGRAM_ID = new PublicKey("stork1JUZMKYgjNagHiK2KdMmb42iTnYe9bYUCDUk8n");
 const STORK_FEED_SEED = Buffer.from("stork_feed", "utf8");
@@ -40,7 +47,8 @@ describe("order_executor (surfpool stork triggers)", function () {
 
   const provider = anchor.AnchorProvider.env();
   anchor.setProvider(provider);
-  const program = new Program(idl, provider);
+  const resolvedProgramId = resolveOrderExecutorProgramId(provider.connection.rpcEndpoint);
+  const program = new Program({ ...idl, address: resolvedProgramId.toBase58() }, provider);
 
   let surfpoolAvailable = false;
 
@@ -70,7 +78,7 @@ describe("order_executor (surfpool stork triggers)", function () {
       maxAgeSec: 3_600n,
     });
 
-    const nowNs = BigInt(Date.now()) * 1_000_000n;
+    const nowNs = await getSurfnetUnixTimestampNs(provider.connection);
     await seedStorkFeed(provider, created.storkFeedPda, feedId, {
       timestampNs: nowNs,
       quantizedValue: 550_000n,
@@ -97,7 +105,7 @@ describe("order_executor (surfpool stork triggers)", function () {
       maxAgeSec: 3_600n,
     });
 
-    const nowNs = BigInt(Date.now()) * 1_000_000n;
+    const nowNs = await getSurfnetUnixTimestampNs(provider.connection);
     await seedStorkFeed(provider, created.storkFeedPda, feedId, {
       timestampNs: nowNs,
       quantizedValue: 800_000n,
@@ -120,7 +128,7 @@ describe("order_executor (surfpool stork triggers)", function () {
       maxAgeSec: 3_600n,
     });
 
-    const nowNs = BigInt(Date.now()) * 1_000_000n;
+    const nowNs = await getSurfnetUnixTimestampNs(provider.connection);
     await seedStorkFeed(provider, created.storkFeedPda, feedId, {
       timestampNs: nowNs,
       quantizedValue: 750_000n,
@@ -143,7 +151,7 @@ describe("order_executor (surfpool stork triggers)", function () {
       maxAgeSec: 3_600n,
     });
 
-    const nowNs = BigInt(Date.now()) * 1_000_000n;
+    const nowNs = await getSurfnetUnixTimestampNs(provider.connection);
     await seedStorkFeed(provider, created.storkFeedPda, feedId, {
       timestampNs: nowNs,
       quantizedValue: 650_000n,
@@ -166,7 +174,7 @@ describe("order_executor (surfpool stork triggers)", function () {
       maxAgeSec: 3_600n,
     });
 
-    const nowNs = BigInt(Date.now()) * 1_000_000n;
+    const nowNs = await getSurfnetUnixTimestampNs(provider.connection);
     await seedStorkFeed(provider, createdSuccess.storkFeedPda, feedId, {
       timestampNs: nowNs,
       quantizedValue: 1n,
@@ -205,11 +213,12 @@ describe("order_executor (surfpool stork triggers)", function () {
       maxAgeSec: 1n,
     });
 
-    const staleNs = (BigInt(Date.now()) - 10_000n) * 1_000_000n;
+    const nowNs = await getSurfnetUnixTimestampNs(provider.connection);
     await seedStorkFeed(provider, created.storkFeedPda, feedId, {
-      timestampNs: staleNs,
+      timestampNs: nowNs,
       quantizedValue: 550_000n,
     });
+    await advanceSurfnetClockSeconds(provider.connection, 5);
 
     await expectRpcFailure(
       () => executeStorkOrder(provider, program, created, created.storkFeedPda),
@@ -231,7 +240,7 @@ describe("order_executor (surfpool stork triggers)", function () {
     });
 
     const wrongFeedPda = deriveStorkFeedPda(wrongFeedId);
-    const nowNs = BigInt(Date.now()) * 1_000_000n;
+    const nowNs = await getSurfnetUnixTimestampNs(provider.connection);
     await seedStorkFeed(provider, created.storkFeedPda, expectedFeedId, {
       timestampNs: nowNs,
       quantizedValue: 550_000n,
@@ -247,23 +256,6 @@ describe("order_executor (surfpool stork triggers)", function () {
     );
   });
 });
-
-async function hasSurfpoolCheatcodes(connection: anchor.web3.Connection): Promise<boolean> {
-  const methods = ["surfnet_getSurfnetInfos", "surfnet_getSurfnetInfo"];
-  try {
-    for (const method of methods) {
-      try {
-        const response = await (connection as any)._rpcRequest(method, []);
-        if (!response?.error) return true;
-      } catch {
-        // Try the next known method name/version.
-      }
-    }
-  } catch {
-    // fallthrough
-  }
-  return false;
-}
 
 async function airdropAndConfirm(
   provider: anchor.AnchorProvider,
@@ -425,20 +417,14 @@ async function seedStorkFeed(
 ): Promise<void> {
   const data = encodeTemporalNumericValueFeedAccount(feedId, value.timestampNs, value.quantizedValue);
   const lamports = await provider.connection.getMinimumBalanceForRentExemption(data.length);
-  const response = await (provider.connection as any)._rpcRequest("surfnet_setAccount", [
-    storkFeedPda.toBase58(),
-    {
-      lamports,
-      owner: STORK_PROGRAM_ID.toBase58(),
-      executable: false,
-      rent_epoch: 0,
-      data: data.toString("hex"),
-    },
-  ]);
-
-  if (response?.error) {
-    throw new Error(`surfnet_setAccount failed: ${JSON.stringify(response.error)}`);
-  }
+  await surfnetSetAccount(provider.connection, {
+    pubkey: storkFeedPda,
+    lamports,
+    owner: STORK_PROGRAM_ID,
+    executable: false,
+    rentEpoch: 0,
+    data,
+  });
 }
 
 function encodeTemporalNumericValueFeedAccount(
@@ -536,4 +522,22 @@ function safeJson(value: unknown): string {
   } catch {
     return String(value);
   }
+}
+
+function resolveOrderExecutorProgramId(rpcEndpoint: string): PublicKey {
+  const anchorToml = fs.readFileSync(anchorTomlPath, "utf8");
+  const targetSection = /127\.0\.0\.1|localhost/.test(rpcEndpoint) ? "localnet" : "devnet";
+  const sectionMatch = anchorToml.match(
+    new RegExp(
+      String.raw`\[programs\.${targetSection}\][\s\S]*?order_executor\s*=\s*"([^"]+)"`,
+      "m",
+    ),
+  );
+
+  const fallback = (idl.address as string | undefined) ?? (idl.metadata?.address as string);
+  const address = sectionMatch?.[1] ?? fallback;
+  if (!address) {
+    throw new Error("Could not resolve order_executor program id from Anchor.toml or IDL");
+  }
+  return new PublicKey(address);
 }

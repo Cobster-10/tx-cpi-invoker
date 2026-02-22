@@ -1,0 +1,27 @@
+[network]
+slot_time = 400
+rpc_url = "https://api.mainnet-beta.solana.com"
+
+[behavior]
+genesis = false
+point_fork = true
+
+[programs]
+# Explicitly deploy local Anchor program binaries when Surfpool starts.
+deploy = ["./target/deploy/*.so"]
+# Register IDLs for better introspection/parsing in Surfpool Studio.
+idls = ["./target/idl/*.json"]
+
+[logging]
+level = "info"
+format = "text"
+
+[studio]
+enabled = true
+host = "127.0.0.1"
+port = 18488
+
+[advanced]
+host = "127.0.0.1"
+rpc_port = 8899
+ws_port = 8900

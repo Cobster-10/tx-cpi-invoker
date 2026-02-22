@@ -5,10 +5,10 @@ resolution = true
 skip-lint = false
 
 [programs.devnet]
-order_executor = "2f2ph1Sgi14dAfKwYXNb5XPuAhuokWCW5WNLyfiQXKc2"
+order_executor = "5992aQmSRbEbah48narXCRBUwsdv3sSoCC9bKGeYoNjT"
 
 [programs.localnet]
-order_executor = "3p8QPys3SHaEyf4szGgcoF4x2FbGaT3uTgZibLity5hi"
+order_executor = "5992aQmSRbEbah48narXCRBUwsdv3sSoCC9bKGeYoNjT"
 
 [registry]
 url = "https://api.apr.dev"
