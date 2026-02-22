@@ -16,8 +16,7 @@ mod tests {
         pubkey::Pubkey,
         signature::Keypair,
         signer::Signer,
-        system_instruction,
-        system_program,
+        system_instruction, system_program,
         transaction::Transaction,
     };
 
@@ -123,7 +122,12 @@ mod tests {
         }
     }
 
-    fn cancel_order_ix(user: &Pubkey, order: &Pubkey, vault: &Pubkey, order_id: u64) -> Instruction {
+    fn cancel_order_ix(
+        user: &Pubkey,
+        order: &Pubkey,
+        vault: &Pubkey,
+        order_id: u64,
+    ) -> Instruction {
         let mut data = ix_discriminator("cancel_order").to_vec();
         order_id.serialize(&mut data).unwrap();
 
@@ -363,7 +367,8 @@ mod tests {
         let transfer_amount = 100_000_000;
         let execution_bounty = 5_000_000;
 
-        let transfer_ix = system_instruction::transfer(&vault_pda, &recipient.pubkey(), transfer_amount);
+        let transfer_ix =
+            system_instruction::transfer(&vault_pda, &recipient.pubkey(), transfer_amount);
         let action = CpiAction {
             program_id: system_program::ID,
             accounts: vec![
@@ -534,10 +539,7 @@ mod tests {
         svm.send_transaction(cancel_tx)
             .expect("cancel_order should succeed");
 
-        let vault_after = svm
-            .get_account(&vault_pda)
-            .map(|a| a.lamports)
-            .unwrap_or(0);
+        let vault_after = svm.get_account(&vault_pda).map(|a| a.lamports).unwrap_or(0);
         assert_eq!(vault_after, 0, "vault should be drained on cancel");
 
         let order_acc = svm.get_account(&order_pda).expect("order account missing");
@@ -632,7 +634,10 @@ mod tests {
             .expect("counter account missing");
         let mut counter_data = counter_acc.data.as_slice();
         let counter = UserOrderCounter::try_deserialize(&mut counter_data).unwrap();
-        assert_eq!(counter.open_order_count, 0, "open order count must decrement");
+        assert_eq!(
+            counter.open_order_count, 0,
+            "open order count must decrement"
+        );
     }
 
     #[test]

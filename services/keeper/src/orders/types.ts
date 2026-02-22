@@ -12,6 +12,12 @@ export type Trigger =
       maxAgeSec: bigint;
     }
   | {
+      kind: "price_above_stork";
+      feedId: Uint8Array;
+      minPriceQ: bigint;
+      maxAgeSec: bigint;
+    }
+  | {
       kind: "stork_outcome_equals";
       feedId: Uint8Array;
       expectedOutcomeQ: bigint;

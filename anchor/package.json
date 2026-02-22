@@ -3,8 +3,9 @@
   "private": true,
   "version": "0.0.0",
   "scripts": {
-    "test": "mocha -r ts-node/register --extensions ts 'tests/**/*.ts'",
-    "test:surfpool": "echo 'Run in two terminals: 1) surfpool start --legacy-anchor-compatibility  2) ANCHOR_PROVIDER_URL=http://127.0.0.1:8899 npm run test'"
+    "test": "mocha -r ts-node/register/transpile-only --extensions ts 'tests/**/*.ts'",
+    "test:surfpool": "echo 'Run in two terminals: 1) surfpool start --legacy-anchor-compatibility  2) ANCHOR_PROVIDER_URL=http://127.0.0.1:8899 npm run test'",
+    "test:surfpool:stork": "mocha -r ts-node/register/transpile-only --extensions ts 'tests/stork-trigger.surfpool.ts'"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.31.1",

@@ -39,6 +39,8 @@ pub mod order_executor {
             OrderError::ProgramNotWhitelisted
         );
 
+        validate_trigger_on_create(&trigger)?;
+
         require!(action.accounts.len() <= 32, OrderError::TooManyAccounts);
 
         let counter = &mut ctx.accounts.order_counter;
@@ -93,7 +95,11 @@ pub mod order_executor {
     pub fn execute_order_if_ready(ctx: Context<ExecuteOrder>) -> Result<()> {
         let clock = Clock::get()?;
         validate_order_ready(&ctx.accounts.order, &clock)?;
-        evaluate_trigger_base(&ctx.accounts.order.trigger, &clock, &ctx.accounts.pda_account)?;
+        evaluate_trigger_base(
+            &ctx.accounts.order.trigger,
+            &clock,
+            &ctx.accounts.pda_account,
+        )?;
 
         let order_pda = ctx.accounts.order.key();
         let vault_pda = ctx.accounts.vault.key();
@@ -113,17 +119,23 @@ pub mod order_executor {
         )
     }
 
-    pub fn execute_order_if_ready_stork(
-        ctx: Context<ExecuteOrderStork>,
-        feed_id: [u8; 32],
-    ) -> Result<()> {
+    pub fn execute_order_if_ready_stork(ctx: Context<ExecuteOrderStork>) -> Result<()> {
         let clock = Clock::get()?;
         validate_order_ready(&ctx.accounts.order, &clock)?;
+        let expected_feed_id = stork_trigger_feed_id(&ctx.accounts.order.trigger)?;
+        let (expected_feed_pda, _) = Pubkey::find_program_address(
+            &[STORK_FEED_SEED.as_ref(), expected_feed_id.as_ref()],
+            &stork_solana_sdk::ID,
+        );
+        require!(
+            ctx.accounts.stork_feed.key() == expected_feed_pda,
+            OrderError::InvalidOracleAccount
+        );
         evaluate_trigger_stork(
             &ctx.accounts.order.trigger,
             &clock,
             &ctx.accounts.stork_feed,
-            &feed_id,
+            &expected_feed_id,
         )?;
 
         let order_pda = ctx.accounts.order.key();
@@ -231,6 +243,16 @@ fn validate_order_ready(order: &Order, clock: &Clock) -> Result<()> {
     Ok(())
 }
 
+fn validate_trigger_on_create(trigger: &Trigger) -> Result<()> {
+    if let Trigger::PriceBelowStork { feed_id, .. }
+    | Trigger::PriceAboveStork { feed_id, .. }
+    | Trigger::StorkOutcomeEquals { feed_id, .. } = trigger
+    {
+        require!(*feed_id != [0u8; 32], OrderError::InvalidOracleAccount);
+    }
+    Ok(())
+}
+
 fn evaluate_trigger_base(
     trigger: &Trigger,
     clock: &Clock,
@@ -242,9 +264,7 @@ fn evaluate_trigger_base(
             account,
             expected_value,
         } => {
-            let pda_account = pda_account
-                .as_ref()
-                .ok_or(OrderError::InvalidPdaAccount)?;
+            let pda_account = pda_account.as_ref().ok_or(OrderError::InvalidPdaAccount)?;
             require!(pda_account.key() == *account, OrderError::InvalidPdaAccount);
             let account_data = pda_account.try_borrow_data()?;
             if account_data.len() < 8 {
@@ -257,11 +277,35 @@ fn evaluate_trigger_base(
             );
             value == *expected_value
         }
-        Trigger::PriceBelowStork { .. } | Trigger::StorkOutcomeEquals { .. } => {
+        Trigger::PriceBelowStork { .. }
+        | Trigger::PriceAboveStork { .. }
+        | Trigger::StorkOutcomeEquals { .. } => {
             return Err(OrderError::StorkTriggerRequiresStorkInstruction.into());
         }
     };
     require!(trigger_met, OrderError::TriggerConditionNotMet);
+    Ok(())
+}
+
+fn stork_trigger_feed_id(trigger: &Trigger) -> Result<[u8; 32]> {
+    match trigger {
+        Trigger::PriceBelowStork { feed_id, .. }
+        | Trigger::PriceAboveStork { feed_id, .. }
+        | Trigger::StorkOutcomeEquals { feed_id, .. } => Ok(*feed_id),
+        _ => Err(OrderError::NonStorkTriggerRequiresBaseInstruction.into()),
+    }
+}
+
+fn require_stork_value_fresh(clock: &Clock, timestamp_ns: u64, max_age_sec: u64) -> Result<()> {
+    let now_ns = u64::try_from(clock.unix_timestamp)
+        .map_err(|_| OrderError::InvalidClock)?
+        .saturating_mul(1_000_000_000);
+
+    let max_age_ns = max_age_sec.saturating_mul(1_000_000_000);
+    require!(
+        now_ns.saturating_sub(timestamp_ns) <= max_age_ns,
+        OrderError::StaleOraclePrice
+    );
     Ok(())
 }
 
@@ -277,42 +321,49 @@ fn evaluate_trigger_stork(
             max_price_q,
             max_age_sec,
         } => {
-            require!(*feed_id == *expected_feed_id, OrderError::InvalidOracleAccount);
-
-            let latest = stork_feed
-                .get_latest_canonical_temporal_numeric_value_unchecked(feed_id)?;
-
-            let now_ns = u64::try_from(clock.unix_timestamp)
-                .map_err(|_| OrderError::InvalidClock)?
-                .saturating_mul(1_000_000_000);
-
-            let max_age_ns = max_age_sec.saturating_mul(1_000_000_000);
             require!(
-                now_ns.saturating_sub(latest.timestamp_ns) <= max_age_ns,
-                OrderError::StaleOraclePrice
+                *feed_id == *expected_feed_id,
+                OrderError::InvalidOracleAccount
             );
 
+            let latest =
+                stork_feed.get_latest_canonical_temporal_numeric_value_unchecked(feed_id)?;
+
+            require_stork_value_fresh(clock, latest.timestamp_ns, *max_age_sec)?;
+
             latest.quantized_value <= *max_price_q
+        }
+        Trigger::PriceAboveStork {
+            feed_id: expected_feed_id,
+            min_price_q,
+            max_age_sec,
+        } => {
+            require!(
+                *feed_id == *expected_feed_id,
+                OrderError::InvalidOracleAccount
+            );
+
+            let latest =
+                stork_feed.get_latest_canonical_temporal_numeric_value_unchecked(feed_id)?;
+
+            require_stork_value_fresh(clock, latest.timestamp_ns, *max_age_sec)?;
+
+            latest.quantized_value >= *min_price_q
         }
         Trigger::StorkOutcomeEquals {
             feed_id: expected_feed_id,
             expected_outcome_q,
             max_age_sec,
         } => {
-            require!(*feed_id == *expected_feed_id, OrderError::InvalidOracleAccount);
-
-            let latest = stork_feed
-                .get_latest_canonical_temporal_numeric_value_unchecked(feed_id)?;
-
-            let now_ns = u64::try_from(clock.unix_timestamp)
-                .map_err(|_| OrderError::InvalidClock)?
-                .saturating_mul(1_000_000_000);
-
-            let max_age_ns = max_age_sec.saturating_mul(1_000_000_000);
             require!(
-                now_ns.saturating_sub(latest.timestamp_ns) <= max_age_ns,
-                OrderError::StaleOraclePrice
+                *feed_id == *expected_feed_id,
+                OrderError::InvalidOracleAccount
             );
+
+            let latest =
+                stork_feed.get_latest_canonical_temporal_numeric_value_unchecked(feed_id)?;
+
+            require_stork_value_fresh(clock, latest.timestamp_ns, *max_age_sec)?;
 
             latest.quantized_value == *expected_outcome_q
         }
@@ -357,7 +408,12 @@ fn execute_order_action<'info>(
         &[b"vault", order_user.as_ref(), &order_id_bytes],
         program_id,
     );
-    let vault_seeds: &[&[u8]] = &[b"vault", order_user.as_ref(), &order_id_bytes, &[vault_bump]];
+    let vault_seeds: &[&[u8]] = &[
+        b"vault",
+        order_user.as_ref(),
+        &order_id_bytes,
+        &[vault_bump],
+    ];
 
     for (i, expected_account) in action.accounts.iter().enumerate() {
         let provided_account = &remaining_accounts[i];
@@ -371,7 +427,6 @@ fn execute_order_action<'info>(
             !expected_account.is_writable || provided_account.is_writable,
             OrderError::WritableEscalation
         );
-
     }
 
     // The target program AccountInfo is the last remaining account after CPI accounts
@@ -489,6 +544,11 @@ pub enum Trigger {
         max_price_q: i128,
         max_age_sec: u64,
     },
+    PriceAboveStork {
+        feed_id: [u8; 32],
+        min_price_q: i128,
+        max_age_sec: u64,
+    },
     StorkOutcomeEquals {
         feed_id: [u8; 32],
         expected_outcome_q: i128,
@@ -600,7 +660,7 @@ pub struct CreateOrder<'info> {
 pub struct ExecuteOrder<'info> {
     #[account(mut, has_one = user @ OrderError::Unauthorized)]
     pub order: Account<'info, Order>,
-    
+
     #[account(
         mut,
         owner = anchor_lang::system_program::ID,
@@ -620,7 +680,6 @@ pub struct ExecuteOrder<'info> {
 }
 
 #[derive(Accounts)]
-#[instruction(feed_id: [u8; 32])]
 pub struct ExecuteOrderStork<'info> {
     #[account(mut, has_one = user @ OrderError::Unauthorized)]
     pub order: Account<'info, Order>,
@@ -632,11 +691,6 @@ pub struct ExecuteOrderStork<'info> {
     )]
     /// CHECK: System-owned vault PDA; owner+seeds enforced by constraints.
     pub vault: AccountInfo<'info>,
-    #[account(
-        seeds = [STORK_FEED_SEED.as_ref(), feed_id.as_ref()],
-        bump,
-        seeds::program = stork_solana_sdk::ID
-    )]
     pub stork_feed: Account<'info, TemporalNumericValueFeed>,
     /// CHECK: Read-only user pubkey; validated via has_one on order.
     pub user: AccountInfo<'info>,

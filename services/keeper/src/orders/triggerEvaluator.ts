@@ -36,6 +36,7 @@ export class TriggerEvaluator {
       }
 
       case "price_below_stork":
+      case "price_above_stork":
       case "stork_outcome_equals":
         // Stork triggers require the invocation server (not yet implemented).
         // Return null to skip for now; will be handled when Stork support is added.

@@ -49,6 +49,11 @@ next-env.d.ts
 # anchor build artifacts
 /anchor/.anchor/
 /anchor/target/
+/anchor/test-ledger/
+
+# surfpool local runtime logs/state
+/.surfpool/
+/anchor/.surfpool/
 
 # build artifacts
 /services/keeper/dist

@@ -202,13 +202,14 @@ export class OrderExecutorClient {
   }
 
   private encodeExecuteOrderIfReadyStorkData(trigger: Trigger): Buffer {
-    if (trigger.kind !== "price_below_stork" && trigger.kind !== "stork_outcome_equals") {
+    if (
+      trigger.kind !== "price_below_stork" &&
+      trigger.kind !== "price_above_stork" &&
+      trigger.kind !== "stork_outcome_equals"
+    ) {
       throw new Error("stork route requires a stork trigger");
     }
-    return Buffer.concat([
-      this.encodeInstructionDiscriminator("execute_order_if_ready_stork"),
-      Buffer.from(trigger.feedId),
-    ]);
+    return this.encodeInstructionDiscriminator("execute_order_if_ready_stork");
   }
 
   private encodeInstructionDiscriminator(ixName: string): Buffer {
@@ -279,6 +280,13 @@ export class OrderExecutorClient {
           maxAgeSec: cursor.readU64(),
         };
       case 3:
+        return {
+          kind: "price_above_stork",
+          feedId: cursor.readFixedBytes(32),
+          minPriceQ: cursor.readI128(),
+          maxAgeSec: cursor.readU64(),
+        };
+      case 4:
         return {
           kind: "stork_outcome_equals",
           feedId: cursor.readFixedBytes(32),

@@ -44,10 +44,36 @@ Requires `solana-test-validator` running on `http://127.0.0.1:8899`, or use the 
    ANCHOR_PROVIDER_URL=http://127.0.0.1:8899 npm run test
    ```
 
-   Or from project root:
-   ```bash
-   ANCHOR_PROVIDER_URL=http://127.0.0.1:8899 npm run anchor-test-ts
-   ```
+### Surfpool Stork Trigger Tests (Synthetic Feed Accounts)
+
+The file `tests/stork-trigger.surfpool.ts` seeds synthetic Stork feed accounts using the
+Surfpool cheatcode RPC method `surfnet_setAccount`, so it does not require live Kalshi feed IDs.
+
+Run it against a Surfpool instance:
+
+```bash
+cd anchor
+surfpool start --legacy-anchor-compatibility
+```
+
+Then in another terminal:
+
+```bash
+cd anchor
+ANCHOR_PROVIDER_URL=http://127.0.0.1:8899 npm run test:surfpool:stork
+```
+
+What it validates:
+- `PriceBelowStork` threshold pass/fail
+- `PriceAboveStork` threshold pass/fail
+- `StorkOutcomeEquals` numeric equality behavior
+- stale price rejection
+- wrong Stork feed account rejection (feed ID is derived from stored trigger)
+
+Or from project root:
+```bash
+ANCHOR_PROVIDER_URL=http://127.0.0.1:8899 npm run anchor-test-ts
+```
 
 ### Environment Variables
 
