@@ -15,20 +15,27 @@ In short: **discover -> evaluate -> execute -> record**.
 ## 2) Current Runtime Design (as implemented)
 
 ```mermaid
-flowchart LR
-  RPC[(Solana RPC)] --> S[OrderScanner]
-  S --> Q[(In-memory queue)]
-  Q --> E[TriggerEvaluator]
-  E --> B[TxBuilder]
+flowchart TD
+  subgraph poll [Poll Loop]
+    RPC[(Solana RPC)] --> S[OrderScanner]
+    S --> Q[(Order Queue)]
+    Q --> E[TriggerEvaluator.evaluate]
+    E -->|base triggers| B[TxBuilder]
+  end
+  subgraph stork [Stork WebSocket]
+    WS[StorkWSListener] -->|priceUpdate| EVAL[TriggerEvaluator.evaluateStork]
+    EVAL --> B
+  end
+  Q -->|subscribe new assets| WS
   B --> T[TxSender]
-  T --> ST[SqliteStore placeholder]
+  T --> ST[SqliteStore]
 ```
 
 Important current-state truth:
 
 - `TxSender` is scaffolded (returns simulated status in dry-run flow).
 - `SqliteStore` is currently in-memory behavior, not durable DB writes.
-- Stork route plumbing exists in types/client but trigger evaluator currently skips Stork execution.
+- Stork route: WebSocket-driven; `FeedIdMapper` maps feed_id to asset IDs; Stork push ix is TODO.
 
 ---
 
@@ -68,17 +75,25 @@ This loop runs every `pollIntervalMs`.
 
 - Thin wrapper around client scan.
 
+### `FeedIdMapper`
+
+- Maps feed_id (32 bytes) to asset ID (e.g. "BTCUSD"). Config: `STORK_FEED_MAP` JSON.
+
+### `StorkWSListener`
+
+- Single WebSocket to Stork; subscribes to asset IDs; emits `priceUpdate` events.
+
 ### `TriggerEvaluator`
 
-- Evaluates currently-supported routes:
-  - `time_after`
-  - `pda_value_equals`
-- Stork trigger kinds currently return `null` (deferred route).
+- Facade dispatching to `TimeAfterEvaluator`, `PdaValueEqualsEvaluator`, `StorkEvaluator`.
+- Base triggers (`time_after`, `pda_value_equals`): polled via `evaluate()`.
+- Stork triggers: event-driven via `evaluateStork(order, snapshot)` from WebSocket handler.
+- `getStorkOrdersForFeed(orders, feedId)` filters orders for a given feed.
 
 ### `TxBuilder`
 
-- Builds execute transaction around program instruction.
-- Stork signed-update prepend is marked TODO.
+- Builds execute transaction; for stork route, derives `stork_feed` PDA from `candidate.feedId`.
+- Stork push instruction (prepend signed update) is TODO; assumes feed updated by Chain Pusher.
 
 ### `TxSender`
 
@@ -119,10 +134,11 @@ If remaining account order or identities differ from stored `CpiAction`, executi
 
 | Trigger | Keeper Evaluates? | Execute Route |
 |---|---:|---|
-| `TimeAfter` | Yes | `base` |
-| `PdaValueEquals` | Yes | `base` |
-| `PriceBelowStork` | Not yet | Planned `stork` |
-| `StorkOutcomeEquals` | Not yet | Planned `stork` |
+| `TimeAfter` | Yes (poll) | `base` |
+| `PdaValueEquals` | Yes (poll) | `base` |
+| `PriceBelowStork` | Yes (WebSocket) | `stork` |
+| `PriceAboveStork` | Yes (WebSocket) | `stork` |
+| `StorkOutcomeEquals` | Yes (WebSocket) | `stork` |
 
 ---
 

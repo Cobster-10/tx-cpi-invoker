@@ -17,6 +17,8 @@ export type KeeperConfig = {
   storkWsUrl?: string;
   storkHttpUrl?: string;
   storkFeedAllowlist?: string[];
+  /** feed_id_hex -> asset_id mapping. JSON: {"<hex>":"BTCUSD",...} */
+  storkFeedMap?: Record<string, string>;
 };
 
 const numberEnv = (value: string | undefined, fallback: number): number => {
@@ -51,4 +53,22 @@ export const loadConfig = (): KeeperConfig => ({
         .map((value) => value.trim())
         .filter(Boolean)
     : undefined,
+  storkFeedMap: parseStorkFeedMap(process.env.STORK_FEED_MAP),
 });
+
+function parseStorkFeedMap(value: string | undefined): Record<string, string> | undefined {
+  if (!value || value.trim() === "") return undefined;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const result: Record<string, string> = {};
+      for (const [k, v] of Object.entries(parsed)) {
+        if (typeof k === "string" && typeof v === "string") result[k] = v;
+      }
+      return Object.keys(result).length > 0 ? result : undefined;
+    }
+  } catch {
+    /* ignore */
+  }
+  return undefined;
+}
