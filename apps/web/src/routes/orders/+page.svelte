@@ -107,7 +107,7 @@
 </script>
 
 <div class="min-w-0 space-y-6 pb-16">
-	<header class="flex flex-wrap items-center justify-between gap-2">
+	<header class="flex flex-wrap items-start justify-between gap-2">
 		<h1 class="text-xl font-semibold tracking-tight">Open Orders</h1>
 		<Button variant="outline" disabled={$loadingOrders} onclick={refreshOrdersView}>
 			<i class="ri-refresh-line text-base" aria-hidden="true"></i>
@@ -125,18 +125,18 @@
 
 		<div class="rounded-md border">
 			<Table.Root>
-			<Table.Header>
-				<Table.Row>
-					<Table.Head>Order ID</Table.Head>
-					<Table.Head>Order</Table.Head>
-					<Table.Head>User</Table.Head>
-					<Table.Head>Status</Table.Head>
-					<Table.Head>Type</Table.Head>
-					<Table.Head>Trigger</Table.Head>
-					<Table.Head class="text-right">Details</Table.Head>
-				</Table.Row>
-			</Table.Header>
-			<Table.Body>
+				<Table.Header>
+					<Table.Row>
+						<Table.Head>Order ID</Table.Head>
+						<Table.Head>Order</Table.Head>
+						<Table.Head>User</Table.Head>
+						<Table.Head>Status</Table.Head>
+						<Table.Head>Type</Table.Head>
+						<Table.Head>Trigger</Table.Head>
+						<Table.Head class="text-right">Details</Table.Head>
+					</Table.Row>
+				</Table.Header>
+				<Table.Body>
 				{#if filteredOrders.length === 0}
 					<Table.Row>
 						<Table.Cell colspan={7} class="py-4">
@@ -196,7 +196,7 @@
 						</Table.Row>
 					{/each}
 				{/if}
-			</Table.Body>
+				</Table.Body>
 			</Table.Root>
 		</div>
 	</section>

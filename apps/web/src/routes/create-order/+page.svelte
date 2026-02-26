@@ -623,7 +623,7 @@
 
 <div class="grid gap-6 pb-32 lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-start lg:pb-16">
 	<div class="min-w-0 space-y-6">
-		<header>
+		<header class="flex flex-wrap items-start justify-between gap-2">
 			<h1 class="text-xl font-semibold tracking-tight">Create Order</h1>
 		</header>
 
@@ -673,8 +673,12 @@
 		<Separator />
 
 		<section class="space-y-3">
-			<div class="flex flex-wrap items-center justify-between gap-2">
+			<div class="flex flex-wrap items-start justify-between gap-2">
 				<h2 class="text-base font-semibold tracking-tight">2. Counter + PDA Preview</h2>
+				<Button variant="outline" disabled={previewBusy || !$walletAddress} onclick={refreshCounterPreview}>
+					<i class="ri-refresh-line text-base" aria-hidden="true"></i>
+					{previewBusy ? 'Loading...' : 'Refresh Preview'}
+				</Button>
 			</div>
 
 			{#if previewError}
