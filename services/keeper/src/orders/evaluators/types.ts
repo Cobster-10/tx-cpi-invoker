@@ -1,9 +1,11 @@
-import { ExecutionCandidate, OrderEnvelope, Trigger } from "../types.js";
+import { ExecutionCandidate, OrderEnvelope, StorkPushPayload, Trigger } from "../types.js";
 
 export type FeedSnapshot = {
   feedId: Uint8Array;
   quantizedValue: bigint;
   timestampNs: bigint;
+  /** Present when the update can be pushed to Stork on-chain (has valid signature data). */
+  storkPushPayload?: StorkPushPayload;
 };
 
 /**

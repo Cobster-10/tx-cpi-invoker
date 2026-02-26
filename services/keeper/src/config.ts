@@ -1,6 +1,11 @@
 import dotenv from "dotenv";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
-dotenv.config({ path: process.env.KEEPER_ENV_PATH });
+const __dirname = fileURLToPath(new URL(".", import.meta.url));
+dotenv.config({
+  path: process.env.KEEPER_ENV_PATH ?? resolve(__dirname, "../.env"),
+});
 
 export type KeeperConfig = {
   rpcHttpUrl: string;

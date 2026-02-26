@@ -39,9 +39,13 @@ export class StorkWSListener extends EventEmitter {
       this.subscribe(this.assets);
     });
 
-    this.ws.on('message', (data: string) => {
-      const raw = JSON.parse(data.toString());
-      this.handleMessage(raw);
+    this.ws.on("message", (data: string) => {
+      try {
+        const raw = JSON.parse(data.toString());
+        this.handleMessage(raw);
+      } catch {
+        /* ignore malformed JSON */
+      }
     });
 
     this.ws.on("close", () => {
@@ -71,10 +75,16 @@ export class StorkWSListener extends EventEmitter {
   }
 
   private handleMessage(msg: any) {
-    if (msg.type !== "oracle_prices" || !msg.data) return;
+    if (msg.type === "oracle_prices" && msg.data) {
+      for (const [symbol, val] of Object.entries(msg.data) as [string, any][]) {
+        const update = this.normalizePriceUpdate(symbol, val);
+        if (update) this.emit("priceUpdate", update);
+      }
+      return;
+    }
 
-    for (const [symbol, val] of Object.entries(msg.data) as [string, any][]) {
-      const update = this.normalizePriceUpdate(symbol, val);
+    if (msg.assetId != null && msg.price != null) {
+      const update = this.normalizePriceUpdate(msg.assetId, msg);
       if (update) this.emit("priceUpdate", update);
     }
   }
@@ -85,12 +95,20 @@ export class StorkWSListener extends EventEmitter {
 
     const ts = signed.timestamped_signature ?? signed;
     const price = signed.price ?? val.price;
-    const timestamp = ts?.timestamp ?? val.timestamp;
-    const sig = ts?.signature ?? { r: "", s: "", v: "" };
+    const timestamp = ts?.timestamp ?? signed.timestamp ?? val.timestamp;
+    const sig = ts?.signature ?? signed.signature ?? val.signature ?? { r: "", s: "", v: "" };
+
+    const publisherMerkleRoot =
+      signed.publisher_merkle_root ?? signed.publisherMerkleRoot ?? val.publisherMerkleRoot ?? "";
+    const calculationAlgHash =
+      signed.calculation_alg?.checksum ??
+      signed.calculationAlgHash ??
+      val.calculationAlgHash ??
+      "";
 
     return {
       assetId: symbol,
-      encodedAssetId: signed.encoded_asset_id ?? "",
+      encodedAssetId: signed.encoded_asset_id ?? signed.encodedAssetId ?? "",
       price: String(price ?? "0"),
       timestamp: String(timestamp ?? "0"),
       signature:
@@ -101,8 +119,8 @@ export class StorkWSListener extends EventEmitter {
               v: String(sig.v ?? ""),
             }
           : { r: "", s: "", v: "" },
-      publisherMerkleRoot: signed.publisher_merkle_root ?? "",
-      calculationAlgHash: signed.calculation_alg?.checksum ?? "",
+      publisherMerkleRoot,
+      calculationAlgHash,
     };
   }
 }

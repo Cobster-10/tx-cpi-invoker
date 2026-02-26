@@ -2,6 +2,7 @@ import { PublicKey, Transaction } from "@solana/web3.js";
 import { ExecutionCandidate, OrderEnvelope } from "../orders/types.js";
 import { deriveStorkFeedPda } from "../orders/helpers.js";
 import { OrderExecutorClient } from "./orderExecutorClient.js";
+import { buildStorkUpdateInstruction } from "./storkClient.js";
 
 export type BuildTransactionInput = {
   candidate: ExecutionCandidate;
@@ -20,18 +21,23 @@ export class TxBuilder {
     if (input.candidate.route === "stork" && input.candidate.feedId) {
       const storkFeed =
         input.storkFeed ?? deriveStorkFeedPda(input.candidate.feedId);
-      // TODO: prepend Stork push instruction when signed payload is available.
-      // For now, assume feed is already updated (e.g. by Chain Pusher).
-      const instruction = this.client.buildExecuteInstruction({
-        route: "stork",
+
+      if (input.candidate.storkPushPayload) {
+        const storkUpdateIx = buildStorkUpdateInstruction({
+          payload: input.candidate.storkPushPayload,
+          payer: input.keeper,
+        });
+        tx.add(storkUpdateIx);
+      }
+
+      const instruction = this.client.buildExecuteOrderIfReadyStorkInstruction({
         order: input.order,
         keeper: input.keeper,
         storkFeed,
       });
       tx.add(instruction);
     } else {
-      const instruction = this.client.buildExecuteInstruction({
-        route: input.candidate.route,
+      const instruction = this.client.buildExecuteOrderIfReadyInstruction({
         order: input.order,
         keeper: input.keeper,
       });

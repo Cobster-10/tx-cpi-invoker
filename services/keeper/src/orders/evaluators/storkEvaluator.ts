@@ -30,6 +30,7 @@ export class StorkEvaluator implements IStorkEvaluator {
         route: "stork",
         reason: `price ${snapshot.quantizedValue} <= ${trigger.maxPriceQ}`,
         feedId: snapshot.feedId,
+        storkPushPayload: snapshot.storkPushPayload,
       };
     }
 
@@ -41,6 +42,7 @@ export class StorkEvaluator implements IStorkEvaluator {
         route: "stork",
         reason: `price ${snapshot.quantizedValue} >= ${trigger.minPriceQ}`,
         feedId: snapshot.feedId,
+        storkPushPayload: snapshot.storkPushPayload,
       };
     }
 
@@ -52,6 +54,7 @@ export class StorkEvaluator implements IStorkEvaluator {
         route: "stork",
         reason: `outcome ${snapshot.quantizedValue} == ${trigger.expectedOutcomeQ}`,
         feedId: snapshot.feedId,
+        storkPushPayload: snapshot.storkPushPayload,
       };
     }
 
