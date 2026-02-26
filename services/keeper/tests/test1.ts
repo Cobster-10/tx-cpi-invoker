@@ -84,9 +84,17 @@ export async function createOrderWithTransferSetup(
   return { orderCounterPda, orderPda, vaultPda };
 }
 
-/** Stork BTCUSD feed_id (Keccak256 from Stork Asset ID Registry). */
+/** Stork feed_ids (Keccak256 from Stork Asset ID Registry). */
 const BTCUSD_FEED_ID = Buffer.from(
   "7404e3d104ea7841c3d9e6fd20adfe99b4ad586bc08d8f3bd3afef894cf184de",
+  "hex"
+);
+const USDTUSD_FEED_ID = Buffer.from(
+  "6dcd0a8fb0460d4f0f98c524e06c10c63377cd098b589c0b90314bfb55751558",
+  "hex"
+);
+const YZYUSDMARK_FEED_ID = Buffer.from(
+  "041aca5a7fa22cfc954a9e14026f5d96d6b18a89043ffcda04a9535525148ea6",
   "hex"
 );
 
@@ -122,6 +130,70 @@ export async function createOrderWithPriceAboveStorkBtcUsd(
       feedId: Array.from(BTCUSD_FEED_ID),
       minPriceQ: new BN("60000000000"),
       maxAgeSec: new BN(300),
+    },
+  };
+  const transferIx = SystemProgram.transfer({
+    fromPubkey: vaultPda,
+    toPubkey: recipient,
+    lamports: Number(lamportsPerSol),
+  });
+  const action = {
+    programId: SystemProgram.programId,
+    accounts: [
+      { pubkey: vaultPda, isWritable: true },
+      { pubkey: recipient, isWritable: true },
+    ],
+    data: Buffer.from(transferIx.data),
+  };
+
+  await program.methods
+    .createOrder(inputAmount, trigger, action, null, executionBounty)
+    .accounts({
+      user: user.publicKey,
+      orderCounter: orderCounterPda,
+      order: orderPda,
+      vault: vaultPda,
+      systemProgram: SystemProgram.programId,
+    })
+    .signers([user])
+    .rpc();
+
+  return { orderPda, vaultPda };
+}
+
+/**
+ * Create order with StorkOutcomeEquals trigger. Executes when feed value equals expectedOutcomeQ.
+ * @param expectedOutcomeQ - Quantized value (e.g. 1_000_000 for $1 with 6 decimals)
+ */
+export async function createOrderWithStorkOutcomeEquals(
+  program: Program,
+  user: Keypair,
+  recipient: PublicKey,
+  orderCounterPda: PublicKey,
+  feedId: Buffer,
+  expectedOutcomeQ: bigint,
+  lamportsPerSol: bigint,
+  orderId: bigint,
+  maxAgeSec: number = 300
+) {
+  const orderIdBuf = Buffer.alloc(8);
+  orderIdBuf.writeBigUInt64LE(orderId);
+  const [orderPda] = PublicKey.findProgramAddressSync(
+    [Buffer.from("order"), user.publicKey.toBuffer(), orderIdBuf],
+    program.programId
+  );
+  const [vaultPda] = PublicKey.findProgramAddressSync(
+    [Buffer.from("vault"), user.publicKey.toBuffer(), orderIdBuf],
+    program.programId
+  );
+
+  const inputAmount = new BN((2n * lamportsPerSol).toString());
+  const executionBounty = new BN(10_000_000);
+  const trigger = {
+    storkOutcomeEquals: {
+      feedId: Array.from(feedId),
+      expectedOutcomeQ: new BN(expectedOutcomeQ.toString()),
+      maxAgeSec: new BN(maxAgeSec),
     },
   };
   const transferIx = SystemProgram.transfer({
@@ -239,6 +311,30 @@ function test2() {
   });
 }
 
+/** Test 3: StorkOutcomeEquals order - 1 SOL to recipient when YZYUSDMARK equals expected value. */
+function test3() {
+  return new Promise(async (resolve, reject) => {
+    try {
+      const pdas = await createOrderWithStorkOutcomeEquals(
+        program,
+        user,
+        recipient,
+        orderCounterPda,
+        YZYUSDMARK_FEED_ID,
+        330243395000000000n, // Set from Stork REST API for YZYUSDMARK
+        LAMPORTS_PER_SOL,
+        2n
+      );
+      console.log("Test 3: Order with StorkOutcomeEquals YZYUSDMARK created");
+      console.log("Order PDA:", pdas.orderPda.toBase58());
+      console.log("Vault PDA:", pdas.vaultPda.toBase58());
+      resolve(true);
+    } catch (error) {
+      reject(error);
+    }
+  });
+}
+
 test1()
   .then((result) => {
     console.log("Test 1 passed:", result);
@@ -246,8 +342,18 @@ test1()
   })
   .then((result) => {
     console.log("Test 2 passed:", result);
+    return test3();
+  })
+  .then((result) => {
+    console.log("Test 3 passed:", result);
   })
   .catch((error) => {
     console.error("Test error:", error);
   });
 
+
+// test3().then((result) => {
+//   console.log("Test 3 passed:", result);
+// }).catch((error) => {
+//   console.error("Test error:", error);
+// });
