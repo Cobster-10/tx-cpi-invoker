@@ -3,3 +3,7 @@ export const BACKEND_BASE_URL =
 
 export const RPC_URL =
   import.meta.env.VITE_RPC_URL?.toString() || 'https://api.devnet.solana.com';
+
+export const ORDER_EXECUTOR_PROGRAM_ID =
+  import.meta.env.VITE_ORDER_EXECUTOR_PROGRAM_ID?.toString() ||
+  '5992aQmSRbEbah48narXCRBUwsdv3sSoCC9bKGeYoNjT';
