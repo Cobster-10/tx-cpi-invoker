@@ -46,13 +46,25 @@ export type CpiAction = {
   data: Buffer;
 };
 
+export type SwapIntent = {
+  swapProgram: PublicKey;
+  inputMint: PublicKey;
+  outputMint: PublicKey;
+  inputAmount: bigint;
+  maxSlippageBps: number;
+};
+
+export type OrderAction =
+  | { kind: "cpi"; action: CpiAction }
+  | { kind: "swapIntent"; intent: SwapIntent };
+
 export type OrderEnvelope = {
   orderPubkey: PublicKey;
   vaultPubkey?: PublicKey;
   orderId: bigint;
   user: PublicKey;
   trigger: Trigger;
-  action: CpiAction;
+  action: OrderAction;
   expiresSlot: bigint | null;
   executed: boolean;
   canceled: boolean;

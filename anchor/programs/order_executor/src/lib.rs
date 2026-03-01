@@ -1,10 +1,20 @@
 use anchor_lang::prelude::*;
 use anchor_lang::system_program::{transfer, Transfer};
 
+use anchor_lang::solana_program::program_pack::Pack;
+use anchor_spl::associated_token::get_associated_token_address;
+use anchor_spl::token::spl_token::{
+    instruction as token_instruction,
+    state::Account as SplTokenAccount,
+};
+
 #[cfg(test)]
 mod tests;
 
 declare_id!("92qmR1awv4UumvZbncHqTUxJBmSF588t1y1hzBSQEjNS");
+
+/// Native SOL mint (wrapped SOL) - used to detect SOL->token swaps.
+const NATIVE_SOL_MINT: Pubkey = pubkey!("So11111111111111111111111111111111111111112");
 
 use stork_solana_sdk::{pda::STORK_FEED_SEED, temporal_numeric_value::TemporalNumericValueFeed};
 
@@ -24,7 +34,7 @@ pub mod order_executor {
         ctx: Context<CreateOrder>,
         input_amount: u64,
         trigger: Trigger,
-        action: CpiAction,
+        action: OrderAction,
         expires_slot: Option<u64>,
         execution_bounty: u64,
     ) -> Result<()> {
@@ -34,14 +44,28 @@ pub mod order_executor {
             OrderError::BountyExceedsAmount
         );
 
-        require!(
-            is_whitelisted_program(action.program_id),
-            OrderError::ProgramNotWhitelisted
-        );
-
         validate_trigger_on_create(&trigger)?;
 
-        require!(action.accounts.len() <= 32, OrderError::TooManyAccounts);
+        match &action {
+            OrderAction::Cpi(cpi) => {
+                require!(
+                    is_whitelisted_program(cpi.program_id),
+                    OrderError::ProgramNotWhitelisted
+                );
+                require!(cpi.accounts.len() <= 32, OrderError::TooManyAccounts);
+            }
+            OrderAction::SwapIntent(intent) => {
+                require!(
+                    is_whitelisted_program(intent.swap_program),
+                    OrderError::ProgramNotWhitelisted
+                );
+                require!(intent.input_amount > 0, OrderError::InvalidAmount);
+                require!(
+                    input_amount >= intent.input_amount,
+                    OrderError::InvalidAmount
+                );
+            }
+        }
 
         let counter = &mut ctx.accounts.order_counter;
         require!(
@@ -92,7 +116,10 @@ pub mod order_executor {
         Ok(())
     }
 
-    pub fn execute_order_if_ready(ctx: Context<ExecuteOrder>) -> Result<()> {
+    pub fn execute_order_if_ready<'info>(
+        ctx: Context<'_, '_, '_, 'info, ExecuteOrder<'info>>,
+        swap_instruction_data: Option<Vec<u8>>,
+    ) -> Result<()> {
         let clock = Clock::get()?;
         validate_order_ready(&ctx.accounts.order, &clock)?;
         evaluate_trigger_base(
@@ -101,14 +128,75 @@ pub mod order_executor {
             &ctx.accounts.pda_account,
         )?;
 
+        match &ctx.accounts.order.action {
+            OrderAction::SwapIntent(_) => {
+                require!(
+                    swap_instruction_data.is_some(),
+                    OrderError::SwapIntentRequiresInstructionData
+                );
+            }
+            OrderAction::Cpi(_) => {
+                require!(
+                    swap_instruction_data.is_none(),
+                    OrderError::CpiMustNotHaveSwapData
+                );
+            }
+        }
+
         let order_pda = ctx.accounts.order.key();
         let vault_pda = ctx.accounts.vault.key();
+        if let OrderAction::SwapIntent(intent) = &ctx.accounts.order.action {
+            if intent.input_mint == NATIVE_SOL_MINT {
+                let order_id_bytes = ctx.accounts.order.order_id.to_le_bytes();
+                let (_, vault_bump) = Pubkey::find_program_address(
+                    &[b"vault", ctx.accounts.order.user.as_ref(), &order_id_bytes],
+                    ctx.program_id,
+                );
+                let vault_seeds: &[&[u8]] = &[
+                    b"vault",
+                    ctx.accounts.order.user.as_ref(),
+                    &order_id_bytes,
+                    &[vault_bump],
+                ];
+                let vault_wsol_ata =
+                    get_associated_token_address(&vault_pda, &NATIVE_SOL_MINT);
+                let wsol_ata_info = ctx
+                    .remaining_accounts
+                    .iter()
+                    .find(|a| a.key() == vault_wsol_ata)
+                    .ok_or(OrderError::VaultWsolAtaAccountMissing)?;
+                require!(wsol_ata_info.is_writable, OrderError::VaultWsolAtaAccountMissing);
+                let transfer_ix = Transfer {
+                    from: ctx.accounts.vault.clone(),
+                    to: wsol_ata_info.clone(),
+                };
+                transfer(
+                    CpiContext::new_with_signer(
+                        ctx.accounts.system_program.to_account_info(),
+                        transfer_ix,
+                        &[vault_seeds],
+                    ),
+                    intent.input_amount,
+                )?;
+                let sync_ix = token_instruction::sync_native(
+                    &anchor_spl::token::ID,
+                    &vault_wsol_ata,
+                )
+                .map_err(|_| OrderError::VaultWsolAtaAccountMissing)?;
+                let sync_account_infos = [
+                    wsol_ata_info.clone(),
+                    ctx.accounts.token_program.to_account_info(),
+                ];
+                anchor_lang::solana_program::program::invoke(&sync_ix, &sync_account_infos)?;
+            }
+        }
         execute_order_action(
             order_pda,
             vault_pda,
             &ctx.accounts.order,
             ctx.program_id,
             ctx.remaining_accounts,
+            swap_instruction_data.as_deref(),
         )?;
         settle_execution(
             &mut ctx.accounts.order,
@@ -119,7 +207,10 @@ pub mod order_executor {
         )
     }
 
-    pub fn execute_order_if_ready_stork(ctx: Context<ExecuteOrderStork>) -> Result<()> {
+    pub fn execute_order_if_ready_stork<'info>(
+        ctx: Context<'_, '_, '_, 'info, ExecuteOrderStork<'info>>,
+        swap_instruction_data: Option<Vec<u8>>,
+    ) -> Result<()> {
         let clock = Clock::get()?;
         validate_order_ready(&ctx.accounts.order, &clock)?;
         let expected_feed_id = stork_trigger_feed_id(&ctx.accounts.order.trigger)?;
@@ -138,14 +229,75 @@ pub mod order_executor {
             &expected_feed_id,
         )?;
 
+        match &ctx.accounts.order.action {
+            OrderAction::SwapIntent(_) => {
+                require!(
+                    swap_instruction_data.is_some(),
+                    OrderError::SwapIntentRequiresInstructionData
+                );
+            }
+            OrderAction::Cpi(_) => {
+                require!(
+                    swap_instruction_data.is_none(),
+                    OrderError::CpiMustNotHaveSwapData
+                );
+            }
+        }
+
         let order_pda = ctx.accounts.order.key();
         let vault_pda = ctx.accounts.vault.key();
+        if let OrderAction::SwapIntent(intent) = &ctx.accounts.order.action {
+            if intent.input_mint == NATIVE_SOL_MINT {
+                let order_id_bytes = ctx.accounts.order.order_id.to_le_bytes();
+                let (_, vault_bump) = Pubkey::find_program_address(
+                    &[b"vault", ctx.accounts.order.user.as_ref(), &order_id_bytes],
+                    ctx.program_id,
+                );
+                let vault_seeds: &[&[u8]] = &[
+                    b"vault",
+                    ctx.accounts.order.user.as_ref(),
+                    &order_id_bytes,
+                    &[vault_bump],
+                ];
+                let vault_wsol_ata =
+                    get_associated_token_address(&vault_pda, &NATIVE_SOL_MINT);
+                let wsol_ata_info = ctx
+                    .remaining_accounts
+                    .iter()
+                    .find(|a| a.key() == vault_wsol_ata)
+                    .ok_or(OrderError::VaultWsolAtaAccountMissing)?;
+                require!(wsol_ata_info.is_writable, OrderError::VaultWsolAtaAccountMissing);
+                let transfer_ix = Transfer {
+                    from: ctx.accounts.vault.clone(),
+                    to: wsol_ata_info.clone(),
+                };
+                transfer(
+                    CpiContext::new_with_signer(
+                        ctx.accounts.system_program.to_account_info(),
+                        transfer_ix,
+                        &[vault_seeds],
+                    ),
+                    intent.input_amount,
+                )?;
+                let sync_ix = token_instruction::sync_native(
+                    &anchor_spl::token::ID,
+                    &vault_wsol_ata,
+                )
+                .map_err(|_| OrderError::VaultWsolAtaAccountMissing)?;
+                let sync_account_infos = [
+                    wsol_ata_info.clone(),
+                    ctx.accounts.token_program.to_account_info(),
+                ];
+                anchor_lang::solana_program::program::invoke(&sync_ix, &sync_account_infos)?;
+            }
+        }
         execute_order_action(
             order_pda,
             vault_pda,
             &ctx.accounts.order,
             ctx.program_id,
             ctx.remaining_accounts,
+            swap_instruction_data.as_deref(),
         )?;
         settle_execution(
             &mut ctx.accounts.order,
@@ -191,7 +343,10 @@ pub mod order_executor {
         Ok(())
     }
 
-    pub fn close_order(ctx: Context<CloseOrder>, order_id: u64) -> Result<()> {
+    pub fn close_order<'info>(
+        ctx: Context<'_, '_, '_, 'info, CloseOrder<'info>>,
+        order_id: u64,
+    ) -> Result<()> {
         let order = &ctx.accounts.order;
 
         require!(
@@ -200,15 +355,17 @@ pub mod order_executor {
         );
         require!(order.order_id == order_id, OrderError::InvalidOrderId);
 
+        let vault_pda = ctx.accounts.vault.key();
+        let user_pubkey = ctx.accounts.user.key();
+        let vault_seeds: &[&[&[u8]]] = &[&[
+            b"vault",
+            order.user.as_ref(),
+            &order_id.to_le_bytes(),
+            &[ctx.bumps.vault],
+        ]];
+
         let remaining_lamports = ctx.accounts.vault.to_account_info().lamports();
         if remaining_lamports > 0 {
-            let vault_seeds: &[&[&[u8]]] = &[&[
-                b"vault",
-                order.user.as_ref(),
-                &order_id.to_le_bytes(),
-                &[ctx.bumps.vault],
-            ]];
-
             transfer(
                 CpiContext::new_with_signer(
                     ctx.accounts.system_program.to_account_info(),
@@ -220,6 +377,66 @@ pub mod order_executor {
                 ),
                 remaining_lamports,
             )?;
+        }
+
+        // Drain vault token accounts: remaining_accounts are pairs (vault_token_account, user_token_account)
+        if !ctx.remaining_accounts.is_empty() {
+            require!(
+                ctx.remaining_accounts.len() % 2 == 0,
+                OrderError::InvalidTokenAccountPairs
+            );
+            let vault_info = ctx.accounts.vault.to_account_info();
+            for chunk in ctx.remaining_accounts.chunks(2) {
+                let vault_token_account = &chunk[0];
+                let user_token_account = &chunk[1];
+
+                let vault_data = vault_token_account.try_borrow_data()?;
+                let vault_token =
+                    SplTokenAccount::unpack(&vault_data).map_err(|_| OrderError::InvalidTokenAccount)?;
+
+                require!(
+                    vault_token.owner == vault_pda,
+                    OrderError::InvalidTokenAccount
+                );
+
+                let user_data = user_token_account.try_borrow_data()?;
+                let user_token =
+                    SplTokenAccount::unpack(&user_data).map_err(|_| OrderError::InvalidTokenAccount)?;
+
+                require!(user_token.owner == user_pubkey, OrderError::InvalidTokenAccount);
+                require!(
+                    vault_token.mint == user_token.mint,
+                    OrderError::InvalidTokenAccount
+                );
+
+                let amount = vault_token.amount;
+                drop(vault_data);
+                drop(user_data);
+
+                if amount > 0 {
+                    let transfer_ix = token_instruction::transfer(
+                        ctx.accounts.token_program.key,
+                        vault_token_account.key,
+                        user_token_account.key,
+                        &vault_pda,
+                        &[],
+                        amount,
+                    )
+                    .map_err(|_| OrderError::InvalidTokenAccount)?;
+
+                    let account_infos = [
+                        vault_token_account.clone(),
+                        user_token_account.clone(),
+                        vault_info.clone(),
+                    ];
+
+                    anchor_lang::solana_program::program::invoke_signed(
+                        &transfer_ix,
+                        &account_infos,
+                        vault_seeds,
+                    )?;
+                }
+            }
         }
 
         let counter = &mut ctx.accounts.order_counter;
@@ -373,30 +590,22 @@ fn evaluate_trigger_stork(
     Ok(())
 }
 
-/// Validates remaining_accounts against the stored CpiAction, builds the CPI
-/// instruction, and invokes it with Order/Vault PDA signer seeds.
+/// Validates remaining_accounts, builds the CPI instruction, and invokes it with
+/// Order/Vault PDA signer seeds.
 ///
-/// remaining_accounts layout: [cpi_account_0, ..., cpi_account_n, target_program]
+/// Cpi: remaining_accounts layout [cpi_account_0, ..., cpi_account_n, target_program]
+/// SwapIntent: remaining_accounts layout [swap_account_0, ..., swap_account_n, target_program];
+///             vault must be writable in remaining_accounts.
+///             When input_mint is native SOL, the program transfers SOL from vault to vault's
+///             WSOL ATA and syncs native before invoking the swap (vault funds the swap).
 fn execute_order_action<'info>(
     order_pda: Pubkey,
     vault_pda: Pubkey,
     order: &Order,
     program_id: &Pubkey,
     remaining_accounts: &[AccountInfo<'info>],
+    swap_instruction_data: Option<&[u8]>,
 ) -> Result<()> {
-    let action = &order.action;
-
-    require!(
-        is_whitelisted_program(action.program_id),
-        OrderError::ProgramNotWhitelisted
-    );
-
-    let expected_len = action.accounts.len() + 1; // +1 for the target program
-    require!(
-        remaining_accounts.len() >= expected_len,
-        OrderError::InsufficientAccounts
-    );
-
     let order_user = order.user;
     let order_id_bytes = order.order_id.to_le_bytes();
     let (_, bump) = Pubkey::find_program_address(
@@ -415,58 +624,126 @@ fn execute_order_action<'info>(
         &[vault_bump],
     ];
 
-    for (i, expected_account) in action.accounts.iter().enumerate() {
-        let provided_account = &remaining_accounts[i];
+    match &order.action {
+        OrderAction::Cpi(action) => {
+            require!(
+                is_whitelisted_program(action.program_id),
+                OrderError::ProgramNotWhitelisted
+            );
 
-        require!(
-            provided_account.key() == expected_account.pubkey,
-            OrderError::AccountMismatch
-        );
+            let expected_len = action.accounts.len() + 1;
+            require!(
+                remaining_accounts.len() >= expected_len,
+                OrderError::InsufficientAccounts
+            );
 
-        require!(
-            !expected_account.is_writable || provided_account.is_writable,
-            OrderError::WritableEscalation
-        );
+            for (i, expected_account) in action.accounts.iter().enumerate() {
+                let provided_account = &remaining_accounts[i];
+                require!(
+                    provided_account.key() == expected_account.pubkey,
+                    OrderError::AccountMismatch
+                );
+                require!(
+                    !expected_account.is_writable || provided_account.is_writable,
+                    OrderError::WritableEscalation
+                );
+            }
+
+            let target_program_info = &remaining_accounts[action.accounts.len()];
+            require!(
+                target_program_info.key() == action.program_id,
+                OrderError::AccountMismatch
+            );
+            require!(
+                target_program_info.executable,
+                OrderError::ProgramNotWhitelisted
+            );
+
+            let instruction = anchor_lang::solana_program::instruction::Instruction {
+                program_id: action.program_id,
+                accounts: action
+                    .accounts
+                    .iter()
+                    .map(|a| anchor_lang::solana_program::instruction::AccountMeta {
+                        pubkey: a.pubkey,
+                        is_writable: a.is_writable,
+                        is_signer: a.pubkey == order_pda || a.pubkey == vault_pda,
+                    })
+                    .collect(),
+                data: action.data.clone(),
+            };
+
+            let mut account_infos: Vec<AccountInfo> = remaining_accounts
+                .iter()
+                .take(action.accounts.len())
+                .cloned()
+                .collect();
+            account_infos.push(target_program_info.clone());
+
+            anchor_lang::solana_program::program::invoke_signed(
+                &instruction,
+                &account_infos,
+                &[order_seeds, vault_seeds],
+            )?;
+        }
+        OrderAction::SwapIntent(intent) => {
+            let swap_data = swap_instruction_data.ok_or(OrderError::SwapIntentRequiresInstructionData)?;
+
+            require!(
+                is_whitelisted_program(intent.swap_program),
+                OrderError::ProgramNotWhitelisted
+            );
+
+            require!(
+                remaining_accounts.len() >= 2,
+                OrderError::InsufficientAccounts
+            );
+
+            let vault_in_accounts = remaining_accounts
+                .iter()
+                .take(remaining_accounts.len() - 1)
+                .any(|a| a.key() == vault_pda && a.is_writable);
+            require!(
+                vault_in_accounts,
+                OrderError::VaultMustBeInSwapAccounts
+            );
+
+            let target_program_info = remaining_accounts.last().unwrap();
+            require!(
+                target_program_info.key() == intent.swap_program,
+                OrderError::AccountMismatch
+            );
+            require!(
+                target_program_info.executable,
+                OrderError::ProgramNotWhitelisted
+            );
+
+            let cpi_account_metas: Vec<anchor_lang::solana_program::instruction::AccountMeta> =
+                remaining_accounts
+                    .iter()
+                    .take(remaining_accounts.len() - 1)
+                    .map(|a| anchor_lang::solana_program::instruction::AccountMeta {
+                        pubkey: a.key(),
+                        is_writable: a.is_writable,
+                        is_signer: a.key() == order_pda || a.key() == vault_pda,
+                    })
+                    .collect();
+
+            let instruction = anchor_lang::solana_program::instruction::Instruction {
+                program_id: intent.swap_program,
+                accounts: cpi_account_metas,
+                data: swap_data.to_vec(),
+            };
+
+            let account_infos: Vec<AccountInfo> = remaining_accounts.iter().cloned().collect();
+
+            anchor_lang::solana_program::program::invoke_signed(
+                &instruction,
+                &account_infos,
+                &[order_seeds, vault_seeds],
+            )?;
+        }
     }
-
-    // The target program AccountInfo is the last remaining account after CPI accounts
-    let target_program_info = &remaining_accounts[action.accounts.len()];
-    require!(
-        target_program_info.key() == action.program_id,
-        OrderError::AccountMismatch
-    );
-    require!(
-        target_program_info.executable,
-        OrderError::ProgramNotWhitelisted
-    );
-
-    let instruction = anchor_lang::solana_program::instruction::Instruction {
-        program_id: action.program_id,
-        accounts: action
-            .accounts
-            .iter()
-            .map(|a| anchor_lang::solana_program::instruction::AccountMeta {
-                pubkey: a.pubkey,
-                is_writable: a.is_writable,
-                is_signer: a.pubkey == order_pda || a.pubkey == vault_pda,
-            })
-            .collect(),
-        data: action.data.clone(),
-    };
-
-    // Collect CPI account infos + the target program info
-    let mut account_infos: Vec<AccountInfo> = remaining_accounts
-        .iter()
-        .take(action.accounts.len())
-        .cloned()
-        .collect();
-    account_infos.push(target_program_info.clone());
-
-    anchor_lang::solana_program::program::invoke_signed(
-        &instruction,
-        &account_infos,
-        &[order_seeds, vault_seeds],
-    )?;
 
     Ok(())
 }
@@ -512,10 +789,26 @@ fn settle_execution<'info>(
     Ok(())
 }
 
+/// Swap program IDs (Jupiter, Raydium, Orca) for CPI whitelist.
+pub mod swap_programs {
+    use anchor_lang::prelude::*;
+
+    pub const JUPITER: Pubkey = pubkey!("JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4");
+    pub const RAYDIUM_AMM: Pubkey = pubkey!("675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8");
+    pub const RAYDIUM_CLMM: Pubkey = pubkey!("CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK");
+    pub const ORCA_WHIRLPOOLS: Pubkey = pubkey!("whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc");
+}
+
 fn is_whitelisted_program(program_id: Pubkey) -> bool {
+    use swap_programs;
     matches!(
         program_id,
-        anchor_lang::system_program::ID | anchor_spl::token::ID
+        anchor_lang::system_program::ID
+            | anchor_spl::token::ID
+            | swap_programs::JUPITER
+            | swap_programs::RAYDIUM_AMM
+            | swap_programs::RAYDIUM_CLMM
+            | swap_programs::ORCA_WHIRLPOOLS
     )
 }
 
@@ -557,6 +850,21 @@ pub enum Trigger {
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct SwapIntent {
+    pub swap_program: Pubkey,
+    pub input_mint: Pubkey,
+    pub output_mint: Pubkey,
+    pub input_amount: u64,
+    pub max_slippage_bps: u16,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub enum OrderAction {
+    Cpi(CpiAction),
+    SwapIntent(SwapIntent),
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
 pub struct CpiAction {
     pub program_id: Pubkey,
     pub accounts: Vec<CpiAccount>,
@@ -575,7 +883,7 @@ pub struct Order {
     pub order_id: u64,
     pub input_amount: u64,
     pub trigger: Trigger,
-    pub action: CpiAction,
+    pub action: OrderAction,
     pub created_slot: u64,
     pub expires_slot: Option<u64>,
     pub executed: bool,
@@ -589,13 +897,15 @@ impl Order {
     const MAX_CPI_DATA_LEN: usize = 512;
     const MAX_CPI_ACTION_SIZE: usize =
         32 + 4 + (Self::MAX_CPI_ACCOUNTS * (32 + 1)) + 4 + Self::MAX_CPI_DATA_LEN;
+    /// OrderAction = 1 byte discriminator + max(CpiAction, SwapIntent)
+    const MAX_ORDER_ACTION_SIZE: usize = 1 + Self::MAX_CPI_ACTION_SIZE;
 
     pub const LEN: usize = 8
         + 32
         + 8
         + 8
         + Self::MAX_TRIGGER_SIZE
-        + Self::MAX_CPI_ACTION_SIZE
+        + Self::MAX_ORDER_ACTION_SIZE
         + 8
         + (1 + 8)
         + 1
@@ -677,6 +987,7 @@ pub struct ExecuteOrder<'info> {
     /// CHECK: Optional PDA for PdaValueEquals trigger; validated in evaluate_trigger_base.
     pub pda_account: Option<AccountInfo<'info>>,
     pub system_program: Program<'info, System>,
+    pub token_program: Program<'info, anchor_spl::token::Token>,
 }
 
 #[derive(Accounts)]
@@ -697,6 +1008,7 @@ pub struct ExecuteOrderStork<'info> {
     #[account(mut)]
     pub keeper: Signer<'info>,
     pub system_program: Program<'info, System>,
+    pub token_program: Program<'info, anchor_spl::token::Token>,
 }
 
 #[derive(Accounts)]
@@ -750,6 +1062,7 @@ pub struct CloseOrder<'info> {
     )]
     /// CHECK: System-owned vault PDA; owner+seeds enforced by constraints.
     pub vault: AccountInfo<'info>,
+    pub token_program: Program<'info, anchor_spl::token::Token>,
     pub system_program: Program<'info, System>,
 }
 
@@ -805,4 +1118,16 @@ pub enum OrderError {
     OrderCountOverflow,
     #[msg("Order count underflow")]
     OrderCountUnderflow,
+    #[msg("Invalid token account or ownership")]
+    InvalidTokenAccount,
+    #[msg("Token accounts must be passed as vault/user pairs")]
+    InvalidTokenAccountPairs,
+    #[msg("SwapIntent order requires swap_instruction_data")]
+    SwapIntentRequiresInstructionData,
+    #[msg("Vault must be writable in swap CPI accounts")]
+    VaultMustBeInSwapAccounts,
+    #[msg("Vault WSOL ATA must be in swap accounts for SOL input")]
+    VaultWsolAtaAccountMissing,
+    #[msg("Cpi order must not have swap_instruction_data")]
+    CpiMustNotHaveSwapData,
 }

@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::{CpiAction, Order, Trigger, UserOrderCounter, ID as PROGRAM_ID};
+    use crate::{CpiAction, Order, OrderAction, SwapIntent, Trigger, UserOrderCounter, ID as PROGRAM_ID};
 
     use anchor_lang::{AccountDeserialize, AnchorSerialize};
     use anchor_spl::token::spl_token::{
@@ -71,7 +71,7 @@ mod tests {
         vault_pda: &Pubkey,
         input_amount: u64,
         trigger: Trigger,
-        action: CpiAction,
+        action: OrderAction,
         expires_slot: Option<u64>,
         execution_bounty: u64,
     ) -> Instruction {
@@ -102,8 +102,10 @@ mod tests {
         keeper: &Pubkey,
         pda_account: &Pubkey,
         cpi_accounts_and_program: Vec<AccountMeta>,
+        swap_instruction_data: Option<Vec<u8>>,
     ) -> Instruction {
-        let data = ix_discriminator("execute_order_if_ready").to_vec();
+        let mut data = ix_discriminator("execute_order_if_ready").to_vec();
+        swap_instruction_data.serialize(&mut data).unwrap();
 
         let mut accounts = vec![
             AccountMeta::new(*order, false),
@@ -112,6 +114,7 @@ mod tests {
             AccountMeta::new(*keeper, true),
             AccountMeta::new_readonly(*pda_account, false),
             AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(anchor_spl::token::ID, false),
         ];
         accounts.extend(cpi_accounts_and_program);
 
@@ -148,20 +151,26 @@ mod tests {
         order_counter: &Pubkey,
         order: &Pubkey,
         vault: &Pubkey,
+        token_program: &Pubkey,
         order_id: u64,
+        remaining_accounts: Vec<AccountMeta>,
     ) -> Instruction {
         let mut data = ix_discriminator("close_order").to_vec();
         order_id.serialize(&mut data).unwrap();
 
+        let mut accounts = vec![
+            AccountMeta::new(*user, true),
+            AccountMeta::new(*order_counter, false),
+            AccountMeta::new(*order, false),
+            AccountMeta::new(*vault, false),
+            AccountMeta::new_readonly(*token_program, false),
+            AccountMeta::new_readonly(system_program::ID, false),
+        ];
+        accounts.extend(remaining_accounts);
+
         Instruction {
             program_id: PROGRAM_ID,
-            accounts: vec![
-                AccountMeta::new(*user, true),
-                AccountMeta::new(*order_counter, false),
-                AccountMeta::new(*order, false),
-                AccountMeta::new(*vault, false),
-                AccountMeta::new_readonly(system_program::ID, false),
-            ],
+            accounts,
             data,
         }
     }
@@ -280,11 +289,11 @@ mod tests {
         let (vault_pda, _) = get_vault_pda(&user.pubkey(), 0);
 
         let trigger = Trigger::TimeAfter { slot: 0 };
-        let action = CpiAction {
+        let action = OrderAction::Cpi(CpiAction {
             program_id: system_program::ID,
             accounts: vec![],
             data: vec![],
-        };
+        });
 
         let input_amount = LAMPORTS_PER_SOL;
         let execution_bounty = 10_000_000;
@@ -369,7 +378,7 @@ mod tests {
 
         let transfer_ix =
             system_instruction::transfer(&vault_pda, &recipient.pubkey(), transfer_amount);
-        let action = CpiAction {
+        let action = OrderAction::Cpi(CpiAction {
             program_id: system_program::ID,
             accounts: vec![
                 crate::CpiAccount {
@@ -382,7 +391,7 @@ mod tests {
                 },
             ],
             data: transfer_ix.data,
-        };
+        });
 
         let trigger = Trigger::TimeAfter { slot: 0 };
 
@@ -440,6 +449,7 @@ mod tests {
                 AccountMeta::new(recipient.pubkey(), false),
                 AccountMeta::new_readonly(system_program::ID, false),
             ],
+            None,
         );
         let execute_tx = Transaction::new_signed_with_payer(
             &[execute_ix],
@@ -490,11 +500,11 @@ mod tests {
 
         let input_amount = 500_000_000;
         let trigger = Trigger::TimeAfter { slot: u64::MAX };
-        let action = CpiAction {
+        let action = OrderAction::Cpi(CpiAction {
             program_id: system_program::ID,
             accounts: vec![],
             data: vec![],
-        };
+        });
 
         let init_ix = init_user_counter_ix(&user.pubkey(), &order_counter_pda);
         let init_tx = Transaction::new_signed_with_payer(
@@ -564,11 +574,11 @@ mod tests {
         let (vault_pda, _) = get_vault_pda(&user.pubkey(), 0);
 
         let trigger = Trigger::TimeAfter { slot: u64::MAX };
-        let action = CpiAction {
+        let action = OrderAction::Cpi(CpiAction {
             program_id: system_program::ID,
             accounts: vec![],
             data: vec![],
-        };
+        });
 
         let init_ix = init_user_counter_ix(&user.pubkey(), &order_counter_pda);
         let init_tx = Transaction::new_signed_with_payer(
@@ -615,7 +625,9 @@ mod tests {
             &order_counter_pda,
             &order_pda,
             &vault_pda,
+            &anchor_spl::token::ID,
             0,
+            vec![],
         );
         let close_tx = Transaction::new_signed_with_payer(
             &[close_ix],
@@ -658,7 +670,7 @@ mod tests {
         let (vault_pda, _) = get_vault_pda(&user.pubkey(), 0);
 
         let transfer_ix = system_instruction::transfer(&vault_pda, &recipient.pubkey(), 1_000_000);
-        let action = CpiAction {
+        let action = OrderAction::Cpi(CpiAction {
             program_id: system_program::ID,
             accounts: vec![
                 crate::CpiAccount {
@@ -671,7 +683,7 @@ mod tests {
                 },
             ],
             data: transfer_ix.data,
-        };
+        });
 
         let init_ix = init_user_counter_ix(&user.pubkey(), &order_counter_pda);
         let init_tx = Transaction::new_signed_with_payer(
@@ -714,6 +726,7 @@ mod tests {
                 AccountMeta::new(recipient.pubkey(), false),
                 AccountMeta::new_readonly(system_program::ID, false),
             ],
+            None,
         );
         let execute_tx = Transaction::new_signed_with_payer(
             &[execute_ix],
@@ -746,7 +759,7 @@ mod tests {
         let (vault_pda, _) = get_vault_pda(&user.pubkey(), 0);
 
         let transfer_ix = system_instruction::transfer(&vault_pda, &recipient.pubkey(), 1_000_000);
-        let action = CpiAction {
+        let action = OrderAction::Cpi(CpiAction {
             program_id: system_program::ID,
             accounts: vec![
                 crate::CpiAccount {
@@ -759,7 +772,7 @@ mod tests {
                 },
             ],
             data: transfer_ix.data,
-        };
+        });
 
         let init_ix = init_user_counter_ix(&user.pubkey(), &order_counter_pda);
         let init_tx = Transaction::new_signed_with_payer(
@@ -802,6 +815,7 @@ mod tests {
                 AccountMeta::new(vault_pda, false),
                 AccountMeta::new(recipient.pubkey(), false),
             ],
+            None,
         );
         let execute_tx = Transaction::new_signed_with_payer(
             &[execute_ix],
@@ -835,7 +849,7 @@ mod tests {
         let (vault_pda, _) = get_vault_pda(&user.pubkey(), 0);
 
         let transfer_ix = system_instruction::transfer(&vault_pda, &recipient.pubkey(), 1_000_000);
-        let action = CpiAction {
+        let action = OrderAction::Cpi(CpiAction {
             program_id: system_program::ID,
             accounts: vec![
                 crate::CpiAccount {
@@ -848,7 +862,7 @@ mod tests {
                 },
             ],
             data: transfer_ix.data,
-        };
+        });
 
         let init_ix = init_user_counter_ix(&user.pubkey(), &order_counter_pda);
         let init_tx = Transaction::new_signed_with_payer(
@@ -892,6 +906,7 @@ mod tests {
                 AccountMeta::new(wrong_recipient.pubkey(), false),
                 AccountMeta::new_readonly(system_program::ID, false),
             ],
+            None,
         );
         let execute_tx = Transaction::new_signed_with_payer(
             &[execute_ix],
@@ -939,11 +954,11 @@ mod tests {
             &vault_pda,
             200_000_000,
             Trigger::TimeAfter { slot: u64::MAX },
-            CpiAction {
+            OrderAction::Cpi(CpiAction {
                 program_id: system_program::ID,
                 accounts: vec![],
                 data: vec![],
-            },
+            }),
             None,
             0,
         );
@@ -1019,7 +1034,7 @@ mod tests {
         )
         .expect("spl token transfer ix");
 
-        let action = CpiAction {
+        let action = OrderAction::Cpi(CpiAction {
             program_id: anchor_spl::token::ID,
             accounts: vec![
                 crate::CpiAccount {
@@ -1036,7 +1051,7 @@ mod tests {
                 },
             ],
             data: transfer_ix.data,
-        };
+        });
 
         let create_ix = create_order_ix(
             &user.pubkey(),
@@ -1073,6 +1088,7 @@ mod tests {
                 AccountMeta::new_readonly(vault_pda, false),
                 AccountMeta::new_readonly(anchor_spl::token::ID, false),
             ],
+            None,
         );
         let execute_tx = Transaction::new_signed_with_payer(
             &[execute_ix],
@@ -1139,7 +1155,7 @@ mod tests {
         )
         .expect("spl token transfer ix");
 
-        let action = CpiAction {
+        let action = OrderAction::Cpi(CpiAction {
             program_id: anchor_spl::token::ID,
             accounts: vec![
                 crate::CpiAccount {
@@ -1156,7 +1172,7 @@ mod tests {
                 },
             ],
             data: transfer_ix.data,
-        };
+        });
 
         let create_ix = create_order_ix(
             &user.pubkey(),
@@ -1190,6 +1206,7 @@ mod tests {
                 AccountMeta::new_readonly(vault_pda, false),
                 AccountMeta::new_readonly(anchor_spl::token::ID, false),
             ],
+            None,
         );
         let execute_tx = Transaction::new_signed_with_payer(
             &[execute_ix],
@@ -1202,5 +1219,327 @@ mod tests {
             execute_res.is_err(),
             "execute_order_if_ready must fail when vault PDA is not token authority"
         );
+    }
+
+    #[test]
+    fn test_close_order_drains_vault_token_accounts_to_user() {
+        let mut svm = LiteSVM::new();
+        let program_bytes = include_bytes!("../../../target/deploy/order_executor.so");
+        svm.add_program(PROGRAM_ID, program_bytes)
+            .expect("load order_executor program");
+
+        let user = Keypair::new();
+        let keeper = Keypair::new();
+        let recipient = Keypair::new();
+        let mint_authority = Keypair::new();
+
+        svm.airdrop(&user.pubkey(), 10 * LAMPORTS_PER_SOL).unwrap();
+        svm.airdrop(&keeper.pubkey(), LAMPORTS_PER_SOL).unwrap();
+
+        let (order_counter_pda, _) = get_order_counter_pda(&user.pubkey());
+        let (order_pda, _) = get_order_pda(&user.pubkey(), 0);
+        let (vault_pda, _) = get_vault_pda(&user.pubkey(), 0);
+
+        let init_ix = init_user_counter_ix(&user.pubkey(), &order_counter_pda);
+        let init_tx = Transaction::new_signed_with_payer(
+            &[init_ix],
+            Some(&user.pubkey()),
+            &[&user],
+            svm.latest_blockhash(),
+        );
+        svm.send_transaction(init_tx)
+            .expect("init_user_counter should succeed");
+
+        // Create vault_ata (vault-owned) and user_ata with tokens in vault
+        let (_, vault_token_account, user_token_account) = create_and_init_token_accounts(
+            &mut svm,
+            &user,
+            &vault_pda,
+            &user.pubkey(),
+            &mint_authority,
+            500_000,
+        );
+
+        let transfer_amount = 100_000_000u64;
+        let transfer_ix =
+            system_instruction::transfer(&vault_pda, &recipient.pubkey(), transfer_amount);
+        let action = OrderAction::Cpi(CpiAction {
+            program_id: system_program::ID,
+            accounts: vec![
+                crate::CpiAccount {
+                    pubkey: vault_pda,
+                    is_writable: true,
+                },
+                crate::CpiAccount {
+                    pubkey: recipient.pubkey(),
+                    is_writable: true,
+                },
+            ],
+            data: transfer_ix.data,
+        });
+
+        let create_ix = create_order_ix(
+            &user.pubkey(),
+            &order_counter_pda,
+            &order_pda,
+            &vault_pda,
+            transfer_amount + 500_000_000,
+            Trigger::TimeAfter { slot: 0 },
+            action,
+            None,
+            0,
+        );
+        let create_tx = Transaction::new_signed_with_payer(
+            &[create_ix],
+            Some(&user.pubkey()),
+            &[&user],
+            svm.latest_blockhash(),
+        );
+        svm.send_transaction(create_tx)
+            .expect("create_order should succeed");
+
+        let execute_ix = execute_order_if_ready_ix(
+            &order_pda,
+            &vault_pda,
+            &user.pubkey(),
+            &keeper.pubkey(),
+            &order_pda,
+            vec![
+                AccountMeta::new(vault_pda, false),
+                AccountMeta::new(recipient.pubkey(), false),
+                AccountMeta::new_readonly(system_program::ID, false),
+            ],
+            None,
+        );
+        let execute_tx = Transaction::new_signed_with_payer(
+            &[execute_ix],
+            Some(&user.pubkey()),
+            &[&user, &keeper],
+            svm.latest_blockhash(),
+        );
+        svm.send_transaction(execute_tx)
+            .expect("execute_order_if_ready should succeed");
+
+        let vault_token_before = token_amount(&svm, &vault_token_account);
+        let user_token_before = token_amount(&svm, &user_token_account);
+        assert_eq!(vault_token_before, 500_000, "vault should have tokens before close");
+        assert_eq!(user_token_before, 0, "user should have 0 tokens before close");
+
+        let close_ix = close_order_ix(
+            &user.pubkey(),
+            &order_counter_pda,
+            &order_pda,
+            &vault_pda,
+            &anchor_spl::token::ID,
+            0,
+            vec![
+                AccountMeta::new(vault_token_account, false),
+                AccountMeta::new(user_token_account, false),
+            ],
+        );
+        let close_tx = Transaction::new_signed_with_payer(
+            &[close_ix],
+            Some(&user.pubkey()),
+            &[&user],
+            svm.latest_blockhash(),
+        );
+        svm.send_transaction(close_tx)
+            .expect("close_order with token drain should succeed");
+
+        let vault_token_after = token_amount(&svm, &vault_token_account);
+        let user_token_after = token_amount(&svm, &user_token_account);
+        assert_eq!(vault_token_after, 0, "vault token account should be drained");
+        assert_eq!(
+            user_token_after, 500_000,
+            "user should receive all tokens from vault"
+        );
+
+        let order_after = svm.get_account(&order_pda);
+        assert!(order_after.is_none(), "order account should be closed");
+    }
+
+    const NATIVE_SOL_MINT: Pubkey = solana_sdk::pubkey!("So11111111111111111111111111111111111111112");
+    const USDC_MINT: Pubkey = solana_sdk::pubkey!("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
+
+    #[test]
+    fn test_create_order_swap_intent() {
+        let mut svm = LiteSVM::new();
+        let program_bytes = include_bytes!("../../../target/deploy/order_executor.so");
+        svm.add_program(PROGRAM_ID, program_bytes)
+            .expect("load order_executor program");
+
+        let user = Keypair::new();
+        svm.airdrop(&user.pubkey(), 10 * LAMPORTS_PER_SOL).unwrap();
+
+        let (order_counter_pda, _) = get_order_counter_pda(&user.pubkey());
+        let (order_pda, _) = get_order_pda(&user.pubkey(), 0);
+        let (vault_pda, _) = get_vault_pda(&user.pubkey(), 0);
+
+        let swap_amount = 100_000_000u64;
+        let input_amount = swap_amount + 500_000_000;
+        let intent = SwapIntent {
+            swap_program: crate::swap_programs::JUPITER,
+            input_mint: NATIVE_SOL_MINT,
+            output_mint: USDC_MINT,
+            input_amount: swap_amount,
+            max_slippage_bps: 100,
+        };
+        let action = OrderAction::SwapIntent(intent);
+        let trigger = Trigger::TimeAfter { slot: u64::MAX };
+
+        let init_ix = init_user_counter_ix(&user.pubkey(), &order_counter_pda);
+        let init_tx = Transaction::new_signed_with_payer(
+            &[init_ix],
+            Some(&user.pubkey()),
+            &[&user],
+            svm.latest_blockhash(),
+        );
+        svm.send_transaction(init_tx)
+            .expect("init_user_counter should succeed");
+
+        let create_ix = create_order_ix(
+            &user.pubkey(),
+            &order_counter_pda,
+            &order_pda,
+            &vault_pda,
+            input_amount,
+            trigger,
+            action,
+            None,
+            0,
+        );
+        let create_tx = Transaction::new_signed_with_payer(
+            &[create_ix],
+            Some(&user.pubkey()),
+            &[&user],
+            svm.latest_blockhash(),
+        );
+        svm.send_transaction(create_tx)
+            .expect("create_order with SwapIntent should succeed");
+
+        let order_acc = svm.get_account(&order_pda).expect("order account missing");
+        let vault_acc = svm.get_account(&vault_pda).expect("vault account missing");
+        assert!(vault_acc.lamports >= input_amount);
+
+        let mut order_data = order_acc.data.as_slice();
+        let order = Order::try_deserialize(&mut order_data).unwrap();
+        assert_eq!(order.user, user.pubkey());
+        assert_eq!(order.order_id, 0);
+        assert_eq!(order.input_amount, input_amount);
+        assert!(!order.executed);
+        assert!(!order.canceled);
+
+        if let OrderAction::SwapIntent(intent) = &order.action {
+            assert_eq!(intent.swap_program, crate::swap_programs::JUPITER);
+            assert_eq!(intent.input_mint, NATIVE_SOL_MINT);
+            assert_eq!(intent.output_mint, USDC_MINT);
+            assert_eq!(intent.input_amount, swap_amount);
+            assert_eq!(intent.max_slippage_bps, 100);
+        } else {
+            panic!("expected SwapIntent action");
+        }
+    }
+
+    #[test]
+    fn test_execute_order_swap_intent() {
+        let mut svm = LiteSVM::new();
+        let program_bytes = include_bytes!("../../../target/deploy/order_executor.so");
+        svm.add_program(PROGRAM_ID, program_bytes)
+            .expect("load order_executor program");
+
+        let user = Keypair::new();
+        let keeper = Keypair::new();
+        let recipient = Keypair::new();
+
+        svm.airdrop(&user.pubkey(), 10 * LAMPORTS_PER_SOL).unwrap();
+        svm.airdrop(&keeper.pubkey(), LAMPORTS_PER_SOL).unwrap();
+
+        let (order_counter_pda, _) = get_order_counter_pda(&user.pubkey());
+        let (order_pda, _) = get_order_pda(&user.pubkey(), 0);
+        let (vault_pda, _) = get_vault_pda(&user.pubkey(), 0);
+
+        let transfer_amount = 100_000_000u64;
+        let input_amount = transfer_amount + 500_000_000;
+        // Use USDC as input_mint so wrap logic doesn't run (avoids native mint in LiteSVM)
+        let intent = SwapIntent {
+            swap_program: system_program::ID,
+            input_mint: USDC_MINT,
+            output_mint: USDC_MINT,
+            input_amount: transfer_amount,
+            max_slippage_bps: 100,
+        };
+        let action = OrderAction::SwapIntent(intent);
+        let trigger = Trigger::TimeAfter { slot: 0 };
+
+        let init_ix = init_user_counter_ix(&user.pubkey(), &order_counter_pda);
+        let init_tx = Transaction::new_signed_with_payer(
+            &[init_ix],
+            Some(&user.pubkey()),
+            &[&user],
+            svm.latest_blockhash(),
+        );
+        svm.send_transaction(init_tx)
+            .expect("init_user_counter should succeed");
+
+        let create_ix = create_order_ix(
+            &user.pubkey(),
+            &order_counter_pda,
+            &order_pda,
+            &vault_pda,
+            input_amount,
+            trigger,
+            action,
+            None,
+            0,
+        );
+        let create_tx = Transaction::new_signed_with_payer(
+            &[create_ix],
+            Some(&user.pubkey()),
+            &[&user],
+            svm.latest_blockhash(),
+        );
+        svm.send_transaction(create_tx)
+            .expect("create_order with SwapIntent should succeed");
+
+        let recipient_before = svm
+            .get_account(&recipient.pubkey())
+            .map(|a| a.lamports)
+            .unwrap_or(0);
+
+        let transfer_ix = system_instruction::transfer(&vault_pda, &recipient.pubkey(), transfer_amount);
+        let swap_instruction_data = transfer_ix.data;
+
+        let execute_ix = execute_order_if_ready_ix(
+            &order_pda,
+            &vault_pda,
+            &user.pubkey(),
+            &keeper.pubkey(),
+            &order_pda,
+            vec![
+                AccountMeta::new(vault_pda, false),
+                AccountMeta::new(recipient.pubkey(), false),
+                AccountMeta::new_readonly(system_program::ID, false),
+            ],
+            Some(swap_instruction_data),
+        );
+        let execute_tx = Transaction::new_signed_with_payer(
+            &[execute_ix],
+            Some(&keeper.pubkey()),
+            &[&keeper],
+            svm.latest_blockhash(),
+        );
+        svm.send_transaction(execute_tx)
+            .expect("execute_order_if_ready with SwapIntent should succeed");
+
+        let recipient_after = svm
+            .get_account(&recipient.pubkey())
+            .map(|a| a.lamports)
+            .unwrap_or(0);
+        assert_eq!(recipient_after, recipient_before + transfer_amount);
+
+        let order_acc = svm.get_account(&order_pda).expect("order account missing");
+        let mut order_data = order_acc.data.as_slice();
+        let order = Order::try_deserialize(&mut order_data).unwrap();
+        assert!(order.executed);
     }
 }

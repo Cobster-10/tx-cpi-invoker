@@ -14,6 +14,13 @@ const TEXT_ENCODER = new TextEncoder();
 
 export const SPL_TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
 
+export const SWAP_PROGRAM_IDS = {
+	JUPITER: new PublicKey('JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4'),
+	RAYDIUM_AMM: new PublicKey('675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8'),
+	RAYDIUM_CLMM: new PublicKey('CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK'),
+	ORCA_WHIRLPOOLS: new PublicKey('whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc')
+} as const;
+
 export type CounterState = {
 	exists: boolean;
 	pda: PublicKey;
@@ -39,12 +46,24 @@ export type CpiActionInput = {
 	data: Uint8Array;
 };
 
+export type SwapIntentInput = {
+	swapProgram: PublicKey;
+	inputMint: PublicKey;
+	outputMint: PublicKey;
+	inputAmount: bigint;
+	maxSlippageBps: number;
+};
+
+export type OrderActionInput =
+	| { kind: 'cpi'; action: CpiActionInput }
+	| { kind: 'swapIntent'; intent: SwapIntentInput };
+
 export type CreateOrderInstructionInput = {
 	user: PublicKey;
 	nextOrderId: bigint;
 	inputAmountLamports: bigint;
 	trigger: TriggerInput;
-	action: CpiActionInput;
+	action: OrderActionInput;
 	expiresSlot: bigint | null;
 	executionBountyLamports: bigint;
 	programId?: PublicKey;
@@ -62,7 +81,11 @@ export function getOrderExecutorProgramId(): PublicKey {
 }
 
 export function isWhitelistedProgram(programId: PublicKey): boolean {
-	return programId.equals(SystemProgram.programId) || programId.equals(SPL_TOKEN_PROGRAM_ID);
+	return (
+		programId.equals(SystemProgram.programId) ||
+		programId.equals(SPL_TOKEN_PROGRAM_ID) ||
+		Object.values(SWAP_PROGRAM_IDS).some((id) => programId.equals(id))
+	);
 }
 
 export function deriveUserOrderCounterPda(
@@ -160,6 +183,22 @@ export function buildCreateOrderInstruction(
 	return { instruction, orderCounterPda, orderPda, vaultPda };
 }
 
+export function buildSwapIntentAction(args: {
+	swapProgram: PublicKey;
+	inputMint: PublicKey;
+	outputMint: PublicKey;
+	inputAmount: bigint;
+	maxSlippageBps: number;
+}): SwapIntentInput {
+	return {
+		swapProgram: args.swapProgram,
+		inputMint: args.inputMint,
+		outputMint: args.outputMint,
+		inputAmount: args.inputAmount,
+		maxSlippageBps: args.maxSlippageBps
+	};
+}
+
 export function buildSystemTransferAction(args: {
 	user: PublicKey;
 	orderId: bigint;
@@ -207,10 +246,34 @@ function encodeCreateOrderArgs(input: CreateOrderInstructionInput): Uint8Array {
 	return concatBytes(
 		u64ToBytes(input.inputAmountLamports),
 		encodeTrigger(input.trigger),
-		encodeCpiAction(input.action),
+		encodeOrderAction(input.action),
 		encodeOptionU64(input.expiresSlot),
 		u64ToBytes(input.executionBountyLamports)
 	);
+}
+
+function encodeOrderAction(action: OrderActionInput): Uint8Array {
+	if (action.kind === 'cpi') {
+		return concatBytes(Uint8Array.of(0), encodeCpiAction(action.action));
+	}
+	return concatBytes(
+		Uint8Array.of(1),
+		action.intent.swapProgram.toBytes(),
+		action.intent.inputMint.toBytes(),
+		action.intent.outputMint.toBytes(),
+		u64ToBytes(action.intent.inputAmount),
+		u16ToBytes(action.intent.maxSlippageBps)
+	);
+}
+
+function u16ToBytes(value: number): Uint8Array {
+	if (!Number.isInteger(value) || value < 0 || value > 0xffff) {
+		throw new Error('u16 out of range');
+	}
+	const out = new Uint8Array(2);
+	out[0] = value & 0xff;
+	out[1] = (value >> 8) & 0xff;
+	return out;
 }
 
 function encodeTrigger(trigger: TriggerInput): Uint8Array {

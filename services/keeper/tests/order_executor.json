@@ -197,6 +197,10 @@
           }
         },
         {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
           "name": "system_program",
           "address": "11111111111111111111111111111111"
         }
@@ -335,7 +339,7 @@
           "name": "action",
           "type": {
             "defined": {
-              "name": "CpiAction"
+              "name": "OrderAction"
             }
           }
         },
@@ -416,7 +420,14 @@
           "address": "11111111111111111111111111111111"
         }
       ],
-      "args": []
+      "args": [
+        {
+          "name": "swap_instruction_data",
+          "type": {
+            "option": "bytes"
+          }
+        }
+      ]
     },
     {
       "name": "execute_order_if_ready_stork",
@@ -482,7 +493,14 @@
           "address": "11111111111111111111111111111111"
         }
       ],
-      "args": []
+      "args": [
+        {
+          "name": "swap_instruction_data",
+          "type": {
+            "option": "bytes"
+          }
+        }
+      ]
     },
     {
       "name": "init_user_counter",
@@ -706,6 +724,31 @@
       "code": 6024,
       "name": "OrderCountUnderflow",
       "msg": "Order count underflow"
+    },
+    {
+      "code": 6025,
+      "name": "InvalidTokenAccount",
+      "msg": "Invalid token account or ownership"
+    },
+    {
+      "code": 6026,
+      "name": "InvalidTokenAccountPairs",
+      "msg": "Token accounts must be passed as vault/user pairs"
+    },
+    {
+      "code": 6027,
+      "name": "SwapIntentRequiresInstructionData",
+      "msg": "SwapIntent order requires swap_instruction_data"
+    },
+    {
+      "code": 6028,
+      "name": "VaultMustBeInSwapAccounts",
+      "msg": "Vault must be writable in swap CPI accounts"
+    },
+    {
+      "code": 6029,
+      "name": "CpiMustNotHaveSwapData",
+      "msg": "Cpi order must not have swap_instruction_data"
     }
   ],
   "types": [
@@ -780,7 +823,7 @@
             "name": "action",
             "type": {
               "defined": {
-                "name": "CpiAction"
+                "name": "OrderAction"
               }
             }
           },
@@ -805,6 +848,62 @@
           {
             "name": "execution_bounty",
             "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "OrderAction",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Cpi",
+            "fields": [
+              {
+                "defined": {
+                  "name": "CpiAction"
+                }
+              }
+            ]
+          },
+          {
+            "name": "SwapIntent",
+            "fields": [
+              {
+                "defined": {
+                  "name": "SwapIntent"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "SwapIntent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "swap_program",
+            "type": "pubkey"
+          },
+          {
+            "name": "input_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "output_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "input_amount",
+            "type": "u64"
+          },
+          {
+            "name": "max_slippage_bps",
+            "type": "u16"
           }
         ]
       }

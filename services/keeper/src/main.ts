@@ -75,9 +75,13 @@ const main = async (): Promise<void> => {
       const assetId = feedMapper.getAssetId(fid);
       if (assetId && !subscribedAssetIds.has(assetId)) toAdd.push(assetId);
     }
+    
+    // To quit the program after this point, you can exit the process:
+    
     if (toAdd.length > 0) {
+      
+
       toAdd.forEach((a) => subscribedAssetIds.add(a));
-      console.log("subscribing", subscribedAssetIds);
       storkListener.subscribe(toAdd); 
       log.info("Stork subscribed to new assets", { assets: toAdd });
     }
@@ -85,18 +89,18 @@ const main = async (): Promise<void> => {
 
   // Listen for price updates from stork and execute orders that are ready
   if (storkListener && feedMapper) {
-    storkListener.on("priceUpdate", (update) => {
+    storkListener.on("priceUpdate", async (update) => {
       const snapshot = priceUpdateToSnapshot(update, feedMapper);
       if (!snapshot) return;
 
-      // 
+      // if (feedMapper.getAssetId(snapshot.feedId) === "PM_517020_PY") {
+      //   console.log("snapshot (PM_517020_PY)", snapshot);
+      // }
+
       const orders = Array.from(queue.values());
       const relevant = evaluator.getStorkOrdersForFeed(orders, snapshot.feedId);
 
-
       for (const order of relevant) {
-        console.log("order", order);
-
         const candidate = evaluator.evaluateStork(order, snapshot);
         if (!candidate) continue;
 
@@ -104,7 +108,7 @@ const main = async (): Promise<void> => {
         if (store.isDuplicate(orderKey, candidate.route)) continue;
 
         const attempts = store.getAttemptCount(orderKey, candidate.route) + 1;
-        const tx = txBuilder.build({
+        const tx = await txBuilder.build({
           candidate,
           order,
           keeper: solana.keeperKeypair.publicKey,
@@ -157,6 +161,7 @@ const main = async (): Promise<void> => {
       const candidate = await evaluator.evaluate(order);
       if (!candidate) continue;
 
+      
       if (store.isDuplicate(orderKey, candidate.route)) {
         queue.delete(orderKey);
         continue;
@@ -165,7 +170,7 @@ const main = async (): Promise<void> => {
 
       const attempts = store.getAttemptCount(orderKey, candidate.route) + 1;
 
-      const tx = txBuilder.build({
+      const tx = await txBuilder.build({
         candidate,
         order,
         keeper: solana.keeperKeypair.publicKey,
@@ -188,7 +193,7 @@ const main = async (): Promise<void> => {
         store.recordCandidateFailure(candidate, "execution_error", attempts);
       }
     }
-
+    
     await sleep(config.pollIntervalMs);
   }
 };

@@ -30,6 +30,9 @@
 *.pem
 /.skills
 
+# keeper logs
+logs.txt
+
 # debug
 npm-debug.log*
 yarn-debug.log*

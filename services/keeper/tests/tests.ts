@@ -61,12 +61,14 @@ export async function createOrderWithTransferSetup(
     lamports: Number(lamportsPerSol),
   });
   const action = {
-    programId: SystemProgram.programId,
-    accounts: [
-      { pubkey: vaultPda, isWritable: true },
-      { pubkey: recipient, isWritable: true },
-    ],
-    data: Buffer.from(transferIx.data),
+    cpi: {
+      programId: SystemProgram.programId,
+      accounts: [
+        { pubkey: vaultPda, isWritable: true },
+        { pubkey: recipient, isWritable: true },
+      ],
+      data: Buffer.from(transferIx.data),
+    },
   };
 
   await program.methods
@@ -138,12 +140,14 @@ export async function createOrderWithPriceAboveStorkBtcUsd(
     lamports: Number(lamportsPerSol),
   });
   const action = {
-    programId: SystemProgram.programId,
-    accounts: [
-      { pubkey: vaultPda, isWritable: true },
-      { pubkey: recipient, isWritable: true },
-    ],
-    data: Buffer.from(transferIx.data),
+    cpi: {
+      programId: SystemProgram.programId,
+      accounts: [
+        { pubkey: vaultPda, isWritable: true },
+        { pubkey: recipient, isWritable: true },
+      ],
+      data: Buffer.from(transferIx.data),
+    },
   };
 
   await program.methods
@@ -202,12 +206,14 @@ export async function createOrderWithStorkOutcomeEquals(
     lamports: Number(lamportsPerSol),
   });
   const action = {
-    programId: SystemProgram.programId,
-    accounts: [
-      { pubkey: vaultPda, isWritable: true },
-      { pubkey: recipient, isWritable: true },
-    ],
-    data: Buffer.from(transferIx.data),
+    cpi: {
+      programId: SystemProgram.programId,
+      accounts: [
+        { pubkey: vaultPda, isWritable: true },
+        { pubkey: recipient, isWritable: true },
+      ],
+      data: Buffer.from(transferIx.data),
+    },
   };
 
   await program.methods
