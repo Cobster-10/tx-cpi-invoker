@@ -31,6 +31,7 @@ export async function fetchOpenOrders(user?: string): Promise<OpenOrder[]> {
   return (await res.json()) as OpenOrder[];
 }
 
+/** @deprecated Direct on-chain create_order is used by the create page. */
 export async function requestCreateOrderTransaction(
   body: CreateOrderRequest
 ): Promise<BuildCreateOrderResponse> {
@@ -48,6 +49,7 @@ export async function requestCreateOrderTransaction(
   return (await res.json()) as BuildCreateOrderResponse;
 }
 
+/** @deprecated Direct on-chain create_order is used by the create page. */
 export async function notifyCreateOrderSubmitted(signature: string): Promise<void> {
   await fetch(new URL('/orders/create-tx/submitted', BACKEND_BASE_URL).toString(), {
     method: 'POST',

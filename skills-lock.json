@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "skills": {
+    "zod": {
+      "source": "bobmatnyc/claude-mpm-skills",
+      "sourceType": "github",
+      "computedHash": "684e38d3b947e6a36cab88e8b0aef3ab1585ae81b3be663d14629b385f3f9395"
+    }
+  }
+}

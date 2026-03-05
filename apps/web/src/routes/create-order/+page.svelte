@@ -8,9 +8,15 @@
 		SystemProgram,
 		Transaction
 	} from '@solana/web3.js';
-	import { notifyCreateOrderSubmitted } from '$lib/api';
 	import { RPC_URL } from '$lib/config';
 	import { getOrderAppContext } from '$lib/order-app-context';
+	import { firstFieldError, parseCreateOrderForm, validateCreateOrderForm } from '$lib/orders/create/parse';
+	import { submitCreateOrder, isCreateOrderSubmitError } from '$lib/orders/create/submit';
+	import type {
+		CreateOrderFieldErrors,
+		CreateOrderFormState,
+		CreateOrderSubmitProgressState
+	} from '$lib/orders/create/types';
 	import {
 		SPL_TOKEN_PROGRAM_ID,
 		buildCreateOrderInstruction,
@@ -28,7 +34,6 @@
 	import * as Alert from '$lib/components/ui/alert';
 	import * as ButtonGroup from '$lib/components/ui/button-group';
 	import { Button } from '$lib/components/ui/button';
-	import * as Card from '$lib/components/ui/card';
 	import * as Field from '$lib/components/ui/field';
 	import { Input } from '$lib/components/ui/input';
 	import * as InputGroup from '$lib/components/ui/input-group';
@@ -91,8 +96,10 @@
 
 	let busy = false;
 	let previewBusy = false;
+	let submitProgress: CreateOrderSubmitProgressState = 'idle';
 	let createError = '';
 	let createMessage = '';
+	let fieldErrors: CreateOrderFieldErrors = {};
 	let previewError = '';
 	let counterPreview: CounterPreview | null = null;
 	let autoPreviewWallet = '';
@@ -165,6 +172,55 @@
 		next[index].preset = preset;
 		rawAccounts = next;
 		if (preset) fillRawAccount(index, preset);
+	}
+
+	function toCreateOrderFormState(): CreateOrderFormState {
+		return {
+			inputAmountSol,
+			executionBountySol,
+			expiresSlot,
+			triggerKind,
+			triggerTimeAfterSlot,
+			triggerPdaAccount,
+			triggerPdaExpectedValue,
+			triggerStorkFeedIdHex,
+			triggerStorkThresholdQ,
+			triggerStorkMaxAgeSec,
+			actionTemplate,
+			systemRecipient,
+			systemTransferAmountMode,
+			systemTransferLamports,
+			splSourceTokenAccount,
+			splDestinationTokenAccount,
+			splAuthorityPda,
+			splTransferAmountRaw,
+			rawProgramId,
+			rawDataEncoding,
+			rawInstructionData,
+			rawAccounts
+		};
+	}
+
+	function setSubmitProgress(state: CreateOrderSubmitProgressState): void {
+		submitProgress = state;
+		busy = !['idle', 'success', 'error'].includes(state);
+	}
+
+	function submitButtonLabel(): string {
+		switch (submitProgress) {
+			case 'validating':
+				return 'Validating...';
+			case 'building':
+				return 'Building...';
+			case 'awaiting_wallet_signature':
+				return 'Awaiting Wallet...';
+			case 'submitting':
+				return 'Submitting...';
+			case 'confirming':
+				return 'Confirming...';
+			default:
+				return 'Create Order';
+		}
 	}
 
 	function parsePubkey(input: string, field: string): PublicKey {
@@ -502,111 +558,58 @@
 	async function createOrder(): Promise<void> {
 		createError = '';
 		createMessage = '';
+		fieldErrors = {};
+		setSubmitProgress('validating');
+
+		const parsed = parseCreateOrderForm(toCreateOrderFormState());
+		if (!parsed.success) {
+			fieldErrors = parsed.fieldErrors;
+			createError = parsed.message ?? firstFieldError(parsed.fieldErrors) ?? 'Invalid create-order inputs.';
+			setSubmitProgress('error');
+			return;
+		}
 
 		const wallet = get(walletAddress);
-		if (!wallet) {
-			createError = 'Connect a wallet from the nav bar first.';
-			return;
-		}
-
 		const provider = getWalletProvider();
-		if (!provider) {
-			createError = 'Wallet provider is not available in the browser.';
-			return;
-		}
 
-		busy = true;
 		try {
+			const result = await submitCreateOrder(parsed.data, {
+				connection,
+				programId: orderExecutorProgramId,
+				walletAddress: wallet,
+				walletProvider: provider as NonNullable<typeof provider>,
+				onProgress: setSubmitProgress
+			});
+
 			const user = new PublicKey(wallet);
-			const inputAmountLamports = parseSolToLamports(inputAmountSol, 'Escrow amount (SOL)');
-			const executionBountyLamports = parseSolToLamports(executionBountySol, 'Execution bounty (SOL)', {
-				allowZero: true
-			});
-			if (executionBountyLamports >= inputAmountLamports) {
-				throw new Error('Execution bounty must be less than the escrow amount.');
-			}
-
-			const expiresSlotParsed = parseU64(expiresSlot, 'Expires slot', {
-				allowEmpty: true,
-				allowZero: false
-			});
-			const expiresSlotValue = expiresSlotParsed ?? null;
-
-			const counter = await fetchUserOrderCounterState(connection, user, orderExecutorProgramId);
-			const nextOrderId = counter.nextOrderId;
-			const [orderPda] = deriveOrderPda(user, nextOrderId, orderExecutorProgramId);
-			const [vaultPda] = deriveVaultPda(user, nextOrderId, orderExecutorProgramId);
-
-			const pendingCtx: PendingOrderContext = {
-				user,
-				nextOrderId,
-				orderPda,
-				vaultPda,
-				inputAmountLamports,
-				executionBountyLamports
-			};
-
-			const trigger = await buildTriggerInputFromForm();
-			const action = buildActionInputFromForm(pendingCtx);
-
-			const tx = new Transaction();
-			if (!counter.exists) {
-				tx.add(buildInitUserCounterInstruction(user, orderExecutorProgramId).instruction);
-			}
-
-			const createIx = buildCreateOrderInstruction({
-				user,
-				nextOrderId,
-				inputAmountLamports,
-				trigger,
-				action,
-				expiresSlot: expiresSlotValue,
-				executionBountyLamports,
-				programId: orderExecutorProgramId
-			});
-			tx.add(createIx.instruction);
-
-			const latest = await connection.getLatestBlockhash('confirmed');
-			tx.feePayer = user;
-			tx.recentBlockhash = latest.blockhash;
-
-			const signed = await provider.signTransaction(tx);
-			const signature = await connection.sendRawTransaction(signed.serialize());
-			await connection.confirmTransaction(
-				{
-					signature,
-					blockhash: latest.blockhash,
-					lastValidBlockHeight: latest.lastValidBlockHeight
-				},
-				'confirmed'
-			);
-
-			createMessage = `Submitted create_order tx ${signature} (order ${nextOrderId.toString()}).`;
+			const nextOrderId = BigInt(result.orderId);
+			createMessage = `Submitted create_order tx ${result.signature} (order ${result.orderId}).`;
 			counterPreview = buildCounterPreview(user, nextOrderId + 1n, true);
-
-			try {
-				await notifyCreateOrderSubmitted(signature);
-			} catch {
-				// backend notifier is optional for direct-create flow
-			}
 
 			await refreshOpenOrders();
 			void refreshCounterPreview();
 		} catch (err) {
-			createError = err instanceof Error ? err.message : 'Create order failed';
-		} finally {
-			busy = false;
+			if (isCreateOrderSubmitError(err)) {
+				createError = err.message;
+				if (err.fieldErrors) fieldErrors = err.fieldErrors;
+			} else {
+				createError = err instanceof Error ? err.message : 'Create order failed';
+			}
+			setSubmitProgress('error');
 		}
 	}
 
-	$: checklistItems = [
-		{ label: 'Wallet connected', ok: Boolean($walletAddress) },
-		{ label: 'Funding valid', ok: hasValidFundingInputs() },
-		{ label: 'Expiry slot valid', ok: hasValidExpiryInput() },
-		{ label: 'Trigger configured', ok: hasValidTriggerInputs() },
-		{ label: 'CPI action configured', ok: hasValidActionInputs() }
-	];
-	$: checklistComplete = checklistItems.every((item) => item.ok);
+	$: {
+		const validation = validateCreateOrderForm(toCreateOrderFormState());
+		checklistItems = [
+			{ label: 'Wallet connected', ok: Boolean($walletAddress) },
+			{ label: 'Funding valid', ok: validation.sections.funding },
+			{ label: 'Expiry slot valid', ok: validation.sections.expiry },
+			{ label: 'Trigger configured', ok: validation.sections.trigger },
+			{ label: 'CPI action configured', ok: validation.sections.action }
+		];
+		checklistComplete = checklistItems.every((item) => item.ok);
+	}
 
 	$: if ($walletAddress && $walletAddress !== autoPreviewWallet) {
 		autoPreviewWallet = $walletAddress;
@@ -1045,7 +1048,7 @@
 	  
 		  <div class="px-4 pb-4 pt-4">
 			<Button class="w-full" onclick={createOrder} disabled={busy || !checklistComplete}>
-			  {busy ? 'Submitting...' : 'Create Order'}
+			  {submitButtonLabel()}
 			</Button>
 		  </div>
 		</div>
@@ -1071,7 +1074,7 @@
 <div class="fixed inset-x-4 bottom-4 z-20 lg:hidden">
 	<div class="rounded-lg border bg-background p-3 shadow-sm">
 		<Button class="w-full" onclick={createOrder} disabled={busy || !checklistComplete}>
-			{busy ? 'Submitting...' : 'Create Order'}
+			{submitButtonLabel()}
 		</Button>
 	</div>
 </div>
