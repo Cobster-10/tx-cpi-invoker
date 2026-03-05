@@ -57,12 +57,14 @@ export async function createOrderWithTransferSetup(
     lamports: Number(lamportsPerSol),
   });
   const action = {
-    programId: SystemProgram.programId,
-    accounts: [
-      { pubkey: vaultPda, isWritable: true },
-      { pubkey: recipient, isWritable: true },
-    ],
-    data: Buffer.from(transferIx.data),
+    cpi: {
+      programId: SystemProgram.programId,
+      accounts: [
+        { pubkey: vaultPda, isWritable: true },
+        { pubkey: recipient, isWritable: true },
+      ],
+      data: Buffer.from(transferIx.data),
+    },
   };
 
   await program.methods
@@ -108,12 +110,14 @@ async function createOrderOnly(
     lamports: Number(lamportsPerSol),
   });
   const action = {
-    programId: SystemProgram.programId,
-    accounts: [
-      { pubkey: vaultPda1, isWritable: true },
-      { pubkey: recipient, isWritable: true },
-    ],
-    data: Buffer.from(transferIx.data),
+    cpi: {
+      programId: SystemProgram.programId,
+      accounts: [
+        { pubkey: vaultPda1, isWritable: true },
+        { pubkey: recipient, isWritable: true },
+      ],
+      data: Buffer.from(transferIx.data),
+    },
   };
 
   await program.methods
@@ -250,7 +254,7 @@ describe("order_executor", function () {
       // CPI remaining_accounts: [vault, recipient, system_program] per CpiAction layout
       // User pays the tx fee (not recipient); build tx with user as fee payer
       const executeIx = await program.methods
-        .executeOrderIfReady()
+        .executeOrderIfReady(null)
         .accounts({
           order: orderPda,
           vault: vaultPda,

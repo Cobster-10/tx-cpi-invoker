@@ -349,12 +349,14 @@ async function createStorkOrder(input: CreateStorkOrderInput): Promise<CreatedSt
           };
 
   const action = {
-    programId: SystemProgram.programId,
-    accounts: [
-      { pubkey: vaultPda, isWritable: true },
-      { pubkey: recipient.publicKey, isWritable: true },
-    ],
-    data: Buffer.from(transferIx.data),
+    cpi: {
+      programId: SystemProgram.programId,
+      accounts: [
+        { pubkey: vaultPda, isWritable: true },
+        { pubkey: recipient.publicKey, isWritable: true },
+      ],
+      data: Buffer.from(transferIx.data),
+    },
   };
 
   await input.program.methods
@@ -392,7 +394,7 @@ async function executeStorkOrder(
   storkFeed: PublicKey,
 ): Promise<string> {
   return program.methods
-    .executeOrderIfReadyStork()
+    .executeOrderIfReadyStork(null)
     .accounts({
       order: created.orderPda,
       vault: created.vaultPda,

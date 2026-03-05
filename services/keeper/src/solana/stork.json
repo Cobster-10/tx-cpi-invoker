@@ -1,0 +1,578 @@
+{
+  "address": "stork1JUZMKYgjNagHiK2KdMmb42iTnYe9bYUCDUk8n",
+  "metadata": {
+    "name": "stork",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "Created with Anchor"
+  },
+  "instructions": [
+    {
+      "name": "initialize",
+      "discriminator": [
+        175,
+        175,
+        109,
+        31,
+        13,
+        152,
+        155,
+        237
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  116,
+                  111,
+                  114,
+                  107,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "stork_sol_public_key",
+          "type": "pubkey"
+        },
+        {
+          "name": "stork_evm_public_key",
+          "type": {
+            "defined": {
+              "name": "EvmPubkey"
+            }
+          }
+        },
+        {
+          "name": "single_update_fee_in_lamports",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "update_single_update_fee_in_lamports",
+      "discriminator": [
+        1,
+        154,
+        255,
+        107,
+        3,
+        43,
+        213,
+        151
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  116,
+                  111,
+                  114,
+                  107,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "owner",
+          "signer": true,
+          "relations": [
+            "config"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "new_single_update_fee_in_lamports",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "update_stork_evm_public_key",
+      "discriminator": [
+        153,
+        177,
+        89,
+        97,
+        168,
+        213,
+        163,
+        107
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  116,
+                  111,
+                  114,
+                  107,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "owner",
+          "signer": true,
+          "relations": [
+            "config"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "new_stork_evm_public_key",
+          "type": {
+            "defined": {
+              "name": "EvmPubkey"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "update_stork_sol_public_key",
+      "discriminator": [
+        152,
+        181,
+        100,
+        254,
+        176,
+        84,
+        135,
+        126
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  116,
+                  111,
+                  114,
+                  107,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "owner",
+          "signer": true,
+          "relations": [
+            "config"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "new_stork_sol_public_key",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "update_temporal_numeric_value_evm",
+      "discriminator": [
+        201,
+        67,
+        98,
+        156,
+        22,
+        183,
+        29,
+        81
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  116,
+                  111,
+                  114,
+                  107,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "treasury",
+          "writable": true
+        },
+        {
+          "name": "feed",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  116,
+                  111,
+                  114,
+                  107,
+                  95,
+                  102,
+                  101,
+                  101,
+                  100
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "update_data.id.0"
+              }
+            ]
+          }
+        },
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "update_data",
+          "type": {
+            "defined": {
+              "name": "TemporalNumericValueEvmInput"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "StorkConfig",
+      "discriminator": [
+        147,
+        12,
+        145,
+        17,
+        238,
+        56,
+        64,
+        196
+      ]
+    },
+    {
+      "name": "TemporalNumericValueFeed",
+      "discriminator": [
+        37,
+        166,
+        65,
+        196,
+        29,
+        105,
+        97,
+        161
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "InsufficientFunds",
+      "msg": "Insufficient funds"
+    },
+    {
+      "code": 6001,
+      "name": "InvalidSignature",
+      "msg": "Invalid signature"
+    },
+    {
+      "code": 6002,
+      "name": "Unauthorized",
+      "msg": "Unauthorized"
+    }
+  ],
+  "types": [
+    {
+      "name": "Bytes32",
+      "docs": [
+        "Newtype wrapper for [u8; 32] to satisfy Anchor's IDL generation requirements."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "EvmPubkey",
+      "docs": [
+        "Newtype wrapper for [u8; 20] (EVM address) to satisfy Anchor's IDL generation requirements."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "array": [
+              "u8",
+              20
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "FeedId",
+      "docs": [
+        "Newtype wrapper for [u8; 32] to satisfy Anchor's IDL generation requirements."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "StorkConfig",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "stork_sol_public_key",
+            "type": "pubkey"
+          },
+          {
+            "name": "stork_evm_public_key",
+            "type": {
+              "defined": {
+                "name": "EvmPubkey"
+              }
+            }
+          },
+          {
+            "name": "single_update_fee_in_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "owner",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "TemporalNumericValue",
+      "docs": [
+        "A struct representing a timestamped value."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "timestamp_ns",
+            "docs": [
+              "The unix timestamp of the value in nanoseconds."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "quantized_value",
+            "docs": [
+              "The quantized value."
+            ],
+            "type": "i128"
+          }
+        ]
+      }
+    },
+    {
+      "name": "TemporalNumericValueEvmInput",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "defined": {
+                "name": "Bytes32"
+              }
+            }
+          },
+          {
+            "name": "temporal_numeric_value",
+            "type": {
+              "defined": {
+                "name": "TemporalNumericValue"
+              }
+            }
+          },
+          {
+            "name": "publisher_merkle_root",
+            "type": {
+              "defined": {
+                "name": "Bytes32"
+              }
+            }
+          },
+          {
+            "name": "value_compute_alg_hash",
+            "type": {
+              "defined": {
+                "name": "Bytes32"
+              }
+            }
+          },
+          {
+            "name": "r",
+            "type": {
+              "defined": {
+                "name": "Bytes32"
+              }
+            }
+          },
+          {
+            "name": "s",
+            "type": {
+              "defined": {
+                "name": "Bytes32"
+              }
+            }
+          },
+          {
+            "name": "v",
+            "type": "u8"
+          },
+          {
+            "name": "treasury_id",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "TemporalNumericValueFeed",
+      "docs": [
+        "An account struct representing a Stork price feed."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "id",
+            "docs": [
+              "The encoded ID of the asset associated with the feed."
+            ],
+            "type": {
+              "defined": {
+                "name": "FeedId"
+              }
+            }
+          },
+          {
+            "name": "latest_value",
+            "docs": [
+              "The latest canonical temporal numeric value for the feed."
+            ],
+            "type": {
+              "defined": {
+                "name": "TemporalNumericValue"
+              }
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

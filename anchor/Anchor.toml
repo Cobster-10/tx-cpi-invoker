@@ -1,12 +1,12 @@
 [toolchain]
-anchor_version="0.31.1"
+anchor_version = "0.31.1"
 
 [features]
 resolution = true
 skip-lint = false
 
 [programs.devnet]
-order_executor = "5992aQmSRbEbah48narXCRBUwsdv3sSoCC9bKGeYoNjT"
+order_executor = "92qmR1awv4UumvZbncHqTUxJBmSF588t1y1hzBSQEjNS"
 
 [programs.localnet]
 order_executor = "5992aQmSRbEbah48narXCRBUwsdv3sSoCC9bKGeYoNjT"

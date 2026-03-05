@@ -29,6 +29,7 @@
 		getOrderExecutorProgramId,
 		isWhitelistedProgram,
 		type CpiActionInput,
+		type OrderActionInput,
 		type TriggerInput
 	} from '$lib/order-executor';
 	import * as Alert from '$lib/components/ui/alert';
@@ -544,14 +545,14 @@
 		return { programId, accounts, data };
 	}
 
-	function buildActionInputFromForm(ctx: PendingOrderContext): CpiActionInput {
+	function buildActionInputFromForm(ctx: PendingOrderContext): OrderActionInput {
 		switch (actionTemplate) {
 			case 'system_transfer':
-				return buildSystemTransferActionInput(ctx);
+				return { kind: 'cpi', action: buildSystemTransferActionInput(ctx) };
 			case 'spl_token_transfer':
-				return buildSplTokenTransferActionInput(ctx);
+				return { kind: 'cpi', action: buildSplTokenTransferActionInput(ctx) };
 			case 'raw_cpi':
-				return buildRawCpiActionInput();
+				return { kind: 'cpi', action: buildRawCpiActionInput() };
 		}
 	}
 

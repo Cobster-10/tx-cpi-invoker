@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { Connection, Keypair, PublicKey } from "@solana/web3.js";
 import { KeeperConfig } from "../config.js";
 
@@ -10,8 +11,11 @@ export type SolanaContext = {
 export const createSolanaContext = (config: KeeperConfig): SolanaContext => {
   const connection = new Connection(config.rpcHttpUrl, config.commitment);
 
-  // Scaffold default: generated keypair. Replace with file loading in implementation step.
-  const keeperKeypair = Keypair.generate();
+  const keypairData = JSON.parse(readFileSync(config.keeperKeypairPath, "utf8"));
+  const secretKey = Array.isArray(keypairData)
+    ? new Uint8Array(keypairData)
+    : new Uint8Array(keypairData.secretKey);
+  const keeperKeypair = Keypair.fromSecretKey(secretKey);
 
   return {
     connection,

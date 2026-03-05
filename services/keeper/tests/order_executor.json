@@ -1,0 +1,1087 @@
+{
+  "address": "92qmR1awv4UumvZbncHqTUxJBmSF588t1y1hzBSQEjNS",
+  "metadata": {
+    "name": "order_executor",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "Execute user-specified CPIs when trigger conditions are met"
+  },
+  "instructions": [
+    {
+      "name": "cancel_order",
+      "discriminator": [
+        95,
+        129,
+        237,
+        240,
+        8,
+        49,
+        223,
+        132
+      ],
+      "accounts": [
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "order"
+          ]
+        },
+        {
+          "name": "order",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  114,
+                  100,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "user"
+              },
+              {
+                "kind": "arg",
+                "path": "order_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "user"
+              },
+              {
+                "kind": "arg",
+                "path": "order_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "order_id",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "close_order",
+      "discriminator": [
+        90,
+        103,
+        209,
+        28,
+        7,
+        63,
+        168,
+        4
+      ],
+      "accounts": [
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "order_counter",
+            "order"
+          ]
+        },
+        {
+          "name": "order_counter",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  114,
+                  100,
+                  101,
+                  114,
+                  95,
+                  99,
+                  111,
+                  117,
+                  110,
+                  116,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "user"
+              }
+            ]
+          }
+        },
+        {
+          "name": "order",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  114,
+                  100,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "user"
+              },
+              {
+                "kind": "arg",
+                "path": "order_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "user"
+              },
+              {
+                "kind": "arg",
+                "path": "order_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "order_id",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "create_order",
+      "discriminator": [
+        141,
+        54,
+        37,
+        207,
+        237,
+        210,
+        250,
+        215
+      ],
+      "accounts": [
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "order_counter"
+          ]
+        },
+        {
+          "name": "order_counter",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  114,
+                  100,
+                  101,
+                  114,
+                  95,
+                  99,
+                  111,
+                  117,
+                  110,
+                  116,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "user"
+              }
+            ]
+          }
+        },
+        {
+          "name": "order",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  114,
+                  100,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "user"
+              },
+              {
+                "kind": "account",
+                "path": "order_counter.next_order_id",
+                "account": "UserOrderCounter"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "user"
+              },
+              {
+                "kind": "account",
+                "path": "order_counter.next_order_id",
+                "account": "UserOrderCounter"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "input_amount",
+          "type": "u64"
+        },
+        {
+          "name": "trigger",
+          "type": {
+            "defined": {
+              "name": "Trigger"
+            }
+          }
+        },
+        {
+          "name": "action",
+          "type": {
+            "defined": {
+              "name": "OrderAction"
+            }
+          }
+        },
+        {
+          "name": "expires_slot",
+          "type": {
+            "option": "u64"
+          }
+        },
+        {
+          "name": "execution_bounty",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "execute_order_if_ready",
+      "discriminator": [
+        2,
+        141,
+        27,
+        243,
+        216,
+        37,
+        14,
+        142
+      ],
+      "accounts": [
+        {
+          "name": "order",
+          "writable": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "order.user",
+                "account": "Order"
+              },
+              {
+                "kind": "account",
+                "path": "order.order_id",
+                "account": "Order"
+              }
+            ]
+          }
+        },
+        {
+          "name": "user",
+          "relations": [
+            "order"
+          ]
+        },
+        {
+          "name": "keeper",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "pda_account",
+          "optional": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "swap_instruction_data",
+          "type": {
+            "option": "bytes"
+          }
+        }
+      ]
+    },
+    {
+      "name": "execute_order_if_ready_stork",
+      "discriminator": [
+        155,
+        217,
+        74,
+        135,
+        221,
+        225,
+        93,
+        116
+      ],
+      "accounts": [
+        {
+          "name": "order",
+          "writable": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "order.user",
+                "account": "Order"
+              },
+              {
+                "kind": "account",
+                "path": "order.order_id",
+                "account": "Order"
+              }
+            ]
+          }
+        },
+        {
+          "name": "stork_feed"
+        },
+        {
+          "name": "user",
+          "relations": [
+            "order"
+          ]
+        },
+        {
+          "name": "keeper",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "swap_instruction_data",
+          "type": {
+            "option": "bytes"
+          }
+        }
+      ]
+    },
+    {
+      "name": "init_user_counter",
+      "discriminator": [
+        111,
+        150,
+        238,
+        234,
+        70,
+        118,
+        96,
+        37
+      ],
+      "accounts": [
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "order_counter",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  114,
+                  100,
+                  101,
+                  114,
+                  95,
+                  99,
+                  111,
+                  117,
+                  110,
+                  116,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "user"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    }
+  ],
+  "accounts": [
+    {
+      "name": "Order",
+      "discriminator": [
+        134,
+        173,
+        223,
+        185,
+        77,
+        86,
+        28,
+        51
+      ]
+    },
+    {
+      "name": "TemporalNumericValueFeed",
+      "discriminator": [
+        37,
+        166,
+        65,
+        196,
+        29,
+        105,
+        97,
+        161
+      ]
+    },
+    {
+      "name": "UserOrderCounter",
+      "discriminator": [
+        80,
+        155,
+        12,
+        188,
+        66,
+        9,
+        228,
+        212
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "InvalidAmount",
+      "msg": "Invalid amount"
+    },
+    {
+      "code": 6001,
+      "name": "OrderAlreadyExecuted",
+      "msg": "Order already executed"
+    },
+    {
+      "code": 6002,
+      "name": "OrderAlreadyCanceled",
+      "msg": "Order already canceled"
+    },
+    {
+      "code": 6003,
+      "name": "TriggerConditionNotMet",
+      "msg": "Trigger condition not met"
+    },
+    {
+      "code": 6004,
+      "name": "OrderExpired",
+      "msg": "Order expired"
+    },
+    {
+      "code": 6005,
+      "name": "InvalidExpiration",
+      "msg": "Invalid expiration slot"
+    },
+    {
+      "code": 6006,
+      "name": "InvalidPdaAccount",
+      "msg": "Invalid PDA account"
+    },
+    {
+      "code": 6007,
+      "name": "InvalidOracleAccount",
+      "msg": "Invalid oracle account"
+    },
+    {
+      "code": 6008,
+      "name": "Unauthorized",
+      "msg": "Unauthorized"
+    },
+    {
+      "code": 6009,
+      "name": "InsufficientEscrowBalance",
+      "msg": "Insufficient escrow balance"
+    },
+    {
+      "code": 6010,
+      "name": "OrderNotSettled",
+      "msg": "Order not settled (must be executed or canceled)"
+    },
+    {
+      "code": 6011,
+      "name": "BountyExceedsAmount",
+      "msg": "Execution bounty exceeds input amount"
+    },
+    {
+      "code": 6012,
+      "name": "InvalidOrderId",
+      "msg": "Invalid order ID"
+    },
+    {
+      "code": 6013,
+      "name": "ProgramNotWhitelisted",
+      "msg": "Program not whitelisted"
+    },
+    {
+      "code": 6014,
+      "name": "TooManyAccounts",
+      "msg": "Too many accounts"
+    },
+    {
+      "code": 6015,
+      "name": "InsufficientAccounts",
+      "msg": "Insufficient accounts provided"
+    },
+    {
+      "code": 6016,
+      "name": "AccountMismatch",
+      "msg": "Account mismatch"
+    },
+    {
+      "code": 6017,
+      "name": "WritableEscalation",
+      "msg": "Writable escalation not allowed"
+    },
+    {
+      "code": 6018,
+      "name": "InvalidClock",
+      "msg": "Invalid clock value"
+    },
+    {
+      "code": 6019,
+      "name": "StaleOraclePrice",
+      "msg": "Stale oracle price"
+    },
+    {
+      "code": 6020,
+      "name": "StorkTriggerRequiresStorkInstruction",
+      "msg": "This trigger must be executed with a Stork instruction"
+    },
+    {
+      "code": 6021,
+      "name": "NonStorkTriggerRequiresBaseInstruction",
+      "msg": "This trigger must be executed with the non-Stork instruction"
+    },
+    {
+      "code": 6022,
+      "name": "OrderIdOverflow",
+      "msg": "Order ID overflow"
+    },
+    {
+      "code": 6023,
+      "name": "OrderCountOverflow",
+      "msg": "Order count overflow"
+    },
+    {
+      "code": 6024,
+      "name": "OrderCountUnderflow",
+      "msg": "Order count underflow"
+    },
+    {
+      "code": 6025,
+      "name": "InvalidTokenAccount",
+      "msg": "Invalid token account or ownership"
+    },
+    {
+      "code": 6026,
+      "name": "InvalidTokenAccountPairs",
+      "msg": "Token accounts must be passed as vault/user pairs"
+    },
+    {
+      "code": 6027,
+      "name": "SwapIntentRequiresInstructionData",
+      "msg": "SwapIntent order requires swap_instruction_data"
+    },
+    {
+      "code": 6028,
+      "name": "VaultMustBeInSwapAccounts",
+      "msg": "Vault must be writable in swap CPI accounts"
+    },
+    {
+      "code": 6029,
+      "name": "CpiMustNotHaveSwapData",
+      "msg": "Cpi order must not have swap_instruction_data"
+    }
+  ],
+  "types": [
+    {
+      "name": "CpiAccount",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pubkey",
+            "type": "pubkey"
+          },
+          {
+            "name": "is_writable",
+            "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "CpiAction",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "program_id",
+            "type": "pubkey"
+          },
+          {
+            "name": "accounts",
+            "type": {
+              "vec": {
+                "defined": {
+                  "name": "CpiAccount"
+                }
+              }
+            }
+          },
+          {
+            "name": "data",
+            "type": "bytes"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Order",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "user",
+            "type": "pubkey"
+          },
+          {
+            "name": "order_id",
+            "type": "u64"
+          },
+          {
+            "name": "input_amount",
+            "type": "u64"
+          },
+          {
+            "name": "trigger",
+            "type": {
+              "defined": {
+                "name": "Trigger"
+              }
+            }
+          },
+          {
+            "name": "action",
+            "type": {
+              "defined": {
+                "name": "OrderAction"
+              }
+            }
+          },
+          {
+            "name": "created_slot",
+            "type": "u64"
+          },
+          {
+            "name": "expires_slot",
+            "type": {
+              "option": "u64"
+            }
+          },
+          {
+            "name": "executed",
+            "type": "bool"
+          },
+          {
+            "name": "canceled",
+            "type": "bool"
+          },
+          {
+            "name": "execution_bounty",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "OrderAction",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Cpi",
+            "fields": [
+              {
+                "defined": {
+                  "name": "CpiAction"
+                }
+              }
+            ]
+          },
+          {
+            "name": "SwapIntent",
+            "fields": [
+              {
+                "defined": {
+                  "name": "SwapIntent"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "SwapIntent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "swap_program",
+            "type": "pubkey"
+          },
+          {
+            "name": "input_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "output_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "input_amount",
+            "type": "u64"
+          },
+          {
+            "name": "max_slippage_bps",
+            "type": "u16"
+          }
+        ]
+      }
+    },
+    {
+      "name": "TemporalNumericValue",
+      "docs": [
+        "A struct representing a timestamped value."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "timestamp_ns",
+            "docs": [
+              "The unix timestamp of the value in nanoseconds."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "quantized_value",
+            "docs": [
+              "The quantized value."
+            ],
+            "type": "i128"
+          }
+        ]
+      }
+    },
+    {
+      "name": "TemporalNumericValueFeed",
+      "docs": [
+        "An account struct representing a Stork price feed."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "id",
+            "docs": [
+              "The encoded ID of the asset associated with the feed."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "latest_value",
+            "docs": [
+              "The latest canonical temporal numeric value for the feed."
+            ],
+            "type": {
+              "defined": {
+                "name": "TemporalNumericValue"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "Trigger",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "TimeAfter",
+            "fields": [
+              {
+                "name": "slot",
+                "type": "u64"
+              }
+            ]
+          },
+          {
+            "name": "PdaValueEquals",
+            "fields": [
+              {
+                "name": "account",
+                "type": "pubkey"
+              },
+              {
+                "name": "expected_value",
+                "type": "u64"
+              }
+            ]
+          },
+          {
+            "name": "PriceBelowStork",
+            "fields": [
+              {
+                "name": "feed_id",
+                "type": {
+                  "array": [
+                    "u8",
+                    32
+                  ]
+                }
+              },
+              {
+                "name": "max_price_q",
+                "type": "i128"
+              },
+              {
+                "name": "max_age_sec",
+                "type": "u64"
+              }
+            ]
+          },
+          {
+            "name": "PriceAboveStork",
+            "fields": [
+              {
+                "name": "feed_id",
+                "type": {
+                  "array": [
+                    "u8",
+                    32
+                  ]
+                }
+              },
+              {
+                "name": "min_price_q",
+                "type": "i128"
+              },
+              {
+                "name": "max_age_sec",
+                "type": "u64"
+              }
+            ]
+          },
+          {
+            "name": "StorkOutcomeEquals",
+            "fields": [
+              {
+                "name": "feed_id",
+                "type": {
+                  "array": [
+                    "u8",
+                    32
+                  ]
+                }
+              },
+              {
+                "name": "expected_outcome_q",
+                "type": "i128"
+              },
+              {
+                "name": "max_age_sec",
+                "type": "u64"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "UserOrderCounter",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "user",
+            "type": "pubkey"
+          },
+          {
+            "name": "next_order_id",
+            "type": "u64"
+          },
+          {
+            "name": "open_order_count",
+            "type": "u64"
+          }
+        ]
+      }
+    }
+  ]
+}

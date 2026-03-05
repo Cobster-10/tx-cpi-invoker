@@ -4,15 +4,29 @@ import {
   SystemProgram,
   TransactionInstruction,
 } from "@solana/web3.js";
-import { createHash } from "node:crypto";
-import { CpiAction, KeeperRoute, OrderEnvelope, Trigger } from "../orders/types.js";
 
-export type BuildExecuteInstructionInput = {
-  route: KeeperRoute;
+const TOKEN_PROGRAM_ID = new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+import { createHash } from "node:crypto";
+import { OrderEnvelope, Trigger } from "../orders/types.js";
+
+export type SwapInstruction = {
+  programId: PublicKey;
+  accounts: Array<{ pubkey: PublicKey; isWritable: boolean }>;
+  data: Buffer;
+};
+
+export type BuildExecuteOrderIfReadyInput = {
   order: OrderEnvelope;
   keeper: PublicKey;
   pdaAccount?: PublicKey;
-  storkFeed?: PublicKey;
+  swapInstruction?: SwapInstruction;
+};
+
+export type BuildExecuteOrderIfReadyStorkInput = {
+  order: OrderEnvelope;
+  keeper: PublicKey;
+  storkFeed: PublicKey;
+  swapInstruction?: SwapInstruction;
 };
 
 export type BuildCancelInstructionInput = {
@@ -20,9 +34,16 @@ export type BuildCancelInstructionInput = {
   user: PublicKey;
 };
 
+export type TokenAccountPair = {
+  vaultTokenAccount: PublicKey;
+  userTokenAccount: PublicKey;
+};
+
 export type BuildCloseInstructionInput = {
   order: OrderEnvelope;
   user: PublicKey;
+  /** Optional pairs of (vault_token_account, user_token_account) for token drain on close */
+  tokenAccountPairs?: TokenAccountPair[];
 };
 
 export type BuildSystemTransferActionInput = {
@@ -33,7 +54,7 @@ export type BuildSystemTransferActionInput = {
 };
 
 export class OrderExecutorClient {
-  private static readonly ORDER_ACCOUNT_SIZE = 1748;
+  private static readonly ORDER_ACCOUNT_SIZE = 1749;
   private static readonly ORDER_DISCRIMINATOR = createHash("sha256")
     .update("account:Order")
     .digest()
@@ -44,6 +65,7 @@ export class OrderExecutorClient {
     readonly programId: PublicKey,
   ) {}
 
+  // This function is used in main loop to scan for open orders
   async scanOpenOrders(): Promise<OrderEnvelope[]> {
     const accounts = await this.connection.getProgramAccounts(this.programId, {
       filters: [{ dataSize: OrderExecutorClient.ORDER_ACCOUNT_SIZE }],
@@ -59,6 +81,7 @@ export class OrderExecutorClient {
     return openOrders;
   }
 
+  // This function is used to derive the order PDA address from the user and order ID
   deriveOrderPda(user: PublicKey, orderId: bigint): [PublicKey, number] {
     const orderIdLe = Buffer.alloc(8);
     orderIdLe.writeBigUInt64LE(orderId);
@@ -68,6 +91,7 @@ export class OrderExecutorClient {
     );
   }
 
+  // This function is used to derive the vault PDA address from the user and order ID
   deriveVaultPda(user: PublicKey, orderId: bigint): [PublicKey, number] {
     const orderIdLe = Buffer.alloc(8);
     orderIdLe.writeBigUInt64LE(orderId);
@@ -77,77 +101,128 @@ export class OrderExecutorClient {
     );
   }
 
-  buildSystemTransferAction(input: BuildSystemTransferActionInput): CpiAction {
-    if (input.lamports > BigInt(Number.MAX_SAFE_INTEGER)) {
-      throw new Error("lamports exceeds Number.MAX_SAFE_INTEGER; split transfer amount");
-    }
 
-    const [vault] = this.deriveVaultPda(input.user, input.orderId);
-    const transferIx = SystemProgram.transfer({
-      fromPubkey: vault,
-      toPubkey: input.recipient,
-      lamports: Number(input.lamports),
-    });
-
-    return {
-      programId: SystemProgram.programId,
-      accounts: [
-        { pubkey: vault, isWritable: true },
-        { pubkey: input.recipient, isWritable: true },
-      ],
-      data: Buffer.from(transferIx.data),
-    };
-  }
-
-  buildExecuteInstruction(input: BuildExecuteInstructionInput): TransactionInstruction {
+  buildExecuteOrderIfReadyInstruction(
+    input: BuildExecuteOrderIfReadyInput,
+  ): TransactionInstruction {
     const [derivedVault] = this.deriveVaultPda(input.order.user, input.order.orderId);
     const vault = input.order.vaultPubkey ?? derivedVault;
     const pdaAccount = input.pdaAccount ?? this.defaultPdaAccountForTrigger(input.order.trigger);
 
-    if (input.route === "stork" && !input.storkFeed) {
-      throw new Error("storkFeed is required for stork execution route");
+    const baseKeys = [
+      { pubkey: input.order.orderPubkey, isWritable: true, isSigner: false },
+      { pubkey: vault, isWritable: true, isSigner: false },
+      { pubkey: input.order.user, isWritable: false, isSigner: false },
+      { pubkey: input.keeper, isWritable: true, isSigner: true },
+      { pubkey: pdaAccount, isWritable: false, isSigner: false },
+      { pubkey: SystemProgram.programId, isWritable: false, isSigner: false },
+      { pubkey: TOKEN_PROGRAM_ID, isWritable: false, isSigner: false },
+    ];
+
+    const data = Buffer.concat([
+      this.encodeInstructionDiscriminator("execute_order_if_ready"),
+      this.encodeOptionVecU8(input.swapInstruction?.data),
+    ]);
+
+    return this.buildExecuteInstructionWithKeys(
+      input.order,
+      baseKeys,
+      data,
+      input.swapInstruction,
+    );
+  }
+
+  buildExecuteOrderIfReadyStorkInstruction(
+    input: BuildExecuteOrderIfReadyStorkInput,
+  ): TransactionInstruction {
+    const [derivedVault] = this.deriveVaultPda(input.order.user, input.order.orderId);
+    const vault = input.order.vaultPubkey ?? derivedVault;
+
+    this.validateStorkTrigger(input.order.trigger);
+
+    const baseKeys = [
+      { pubkey: input.order.orderPubkey, isWritable: true, isSigner: false },
+      { pubkey: vault, isWritable: true, isSigner: false },
+      { pubkey: input.storkFeed, isWritable: false, isSigner: false },
+      { pubkey: input.order.user, isWritable: false, isSigner: false },
+      { pubkey: input.keeper, isWritable: true, isSigner: true },
+      { pubkey: SystemProgram.programId, isWritable: false, isSigner: false },
+      { pubkey: TOKEN_PROGRAM_ID, isWritable: false, isSigner: false },
+    ];
+
+    const data = Buffer.concat([
+      this.encodeInstructionDiscriminator("execute_order_if_ready_stork"),
+      this.encodeOptionVecU8(input.swapInstruction?.data),
+    ]);
+
+    return this.buildExecuteInstructionWithKeys(
+      input.order,
+      baseKeys,
+      data,
+      input.swapInstruction,
+    );
+  }
+
+  private buildExecuteInstructionWithKeys(
+    order: OrderEnvelope,
+    baseKeys: { pubkey: PublicKey; isWritable: boolean; isSigner: boolean }[],
+    data: Buffer,
+    swapInstruction?: SwapInstruction,
+  ): TransactionInstruction {
+    let cpiKeys: { pubkey: PublicKey; isWritable: boolean; isSigner: boolean }[];
+
+    if (swapInstruction) {
+      cpiKeys = swapInstruction.accounts.map((account) => ({
+        pubkey: account.pubkey,
+        isWritable: account.isWritable,
+        isSigner: false,
+      }));
+      cpiKeys.push({
+        pubkey: swapInstruction.programId,
+        isWritable: false,
+        isSigner: false,
+      });
+    } else {
+      const action = order.action;
+      if (action.kind !== "cpi") {
+        throw new Error("swapInstruction required for SwapIntent orders");
+      }
+      cpiKeys = action.action.accounts.map((account) => ({
+        pubkey: account.pubkey,
+        isWritable: account.isWritable,
+        isSigner: false,
+      }));
+      cpiKeys.push({
+        pubkey: action.action.programId,
+        isWritable: false,
+        isSigner: false,
+      });
     }
-
-    const data =
-      input.route === "stork"
-        ? this.encodeExecuteOrderIfReadyStorkData(input.order.trigger)
-        : this.encodeInstructionDiscriminator("execute_order_if_ready");
-
-    const baseKeys =
-      input.route === "stork"
-        ? [
-            { pubkey: input.order.orderPubkey, isWritable: true, isSigner: false },
-            { pubkey: vault, isWritable: true, isSigner: false },
-            { pubkey: input.storkFeed!, isWritable: false, isSigner: false },
-            { pubkey: input.order.user, isWritable: false, isSigner: false },
-            { pubkey: input.keeper, isWritable: true, isSigner: true },
-            { pubkey: SystemProgram.programId, isWritable: false, isSigner: false },
-          ]
-        : [
-            { pubkey: input.order.orderPubkey, isWritable: true, isSigner: false },
-            { pubkey: vault, isWritable: true, isSigner: false },
-            { pubkey: input.order.user, isWritable: false, isSigner: false },
-            { pubkey: input.keeper, isWritable: true, isSigner: true },
-            { pubkey: pdaAccount, isWritable: false, isSigner: false },
-            { pubkey: SystemProgram.programId, isWritable: false, isSigner: false },
-          ];
-
-    const cpiKeys = input.order.action.accounts.map((account) => ({
-      pubkey: account.pubkey,
-      isWritable: account.isWritable,
-      isSigner: false,
-    }));
-    cpiKeys.push({
-      pubkey: input.order.action.programId,
-      isWritable: false,
-      isSigner: false,
-    });
 
     return new TransactionInstruction({
       programId: this.programId,
       keys: [...baseKeys, ...cpiKeys],
       data,
     });
+  }
+
+  private encodeOptionVecU8(value: Buffer | undefined): Buffer {
+    if (value === undefined) {
+      return Buffer.from([0]);
+    }
+    const lenBuf = Buffer.alloc(4);
+    lenBuf.writeUInt32LE(value.length);
+    return Buffer.concat([Buffer.from([1]), lenBuf, value]);
+  }
+
+  private validateStorkTrigger(trigger: Trigger): void {
+    if (
+      trigger.kind !== "price_below_stork" &&
+      trigger.kind !== "price_above_stork" &&
+      trigger.kind !== "stork_outcome_equals"
+    ) {
+      throw new Error("stork route requires a stork trigger");
+    }
   }
 
   buildCancelInstruction(input: BuildCancelInstructionInput): TransactionInstruction {
@@ -177,15 +252,27 @@ export class OrderExecutorClient {
       this.programId,
     );
 
+    const keys = [
+      { pubkey: input.user, isWritable: true, isSigner: true },
+      { pubkey: orderCounter, isWritable: true, isSigner: false },
+      { pubkey: order, isWritable: true, isSigner: false },
+      { pubkey: vault, isWritable: true, isSigner: false },
+      { pubkey: TOKEN_PROGRAM_ID, isWritable: false, isSigner: false },
+      { pubkey: SystemProgram.programId, isWritable: false, isSigner: false },
+    ];
+
+    if (input.tokenAccountPairs?.length) {
+      for (const pair of input.tokenAccountPairs) {
+        keys.push(
+          { pubkey: pair.vaultTokenAccount, isWritable: true, isSigner: false },
+          { pubkey: pair.userTokenAccount, isWritable: true, isSigner: false },
+        );
+      }
+    }
+
     return new TransactionInstruction({
       programId: this.programId,
-      keys: [
-        { pubkey: input.user, isWritable: true, isSigner: true },
-        { pubkey: orderCounter, isWritable: true, isSigner: false },
-        { pubkey: order, isWritable: true, isSigner: false },
-        { pubkey: vault, isWritable: true, isSigner: false },
-        { pubkey: SystemProgram.programId, isWritable: false, isSigner: false },
-      ],
+      keys,
       data: Buffer.concat([
         this.encodeInstructionDiscriminator("close_order"),
         this.encodeU64(input.order.orderId),
@@ -193,23 +280,14 @@ export class OrderExecutorClient {
     });
   }
 
+  // HELPER FUNCTIONS
+  
   private defaultPdaAccountForTrigger(trigger: Trigger): PublicKey {
     if (trigger.kind === "pda_value_equals") {
       return trigger.account;
     }
     // Optional account for non-PdaValueEquals triggers; keep deterministic.
     return SystemProgram.programId;
-  }
-
-  private encodeExecuteOrderIfReadyStorkData(trigger: Trigger): Buffer {
-    if (
-      trigger.kind !== "price_below_stork" &&
-      trigger.kind !== "price_above_stork" &&
-      trigger.kind !== "stork_outcome_equals"
-    ) {
-      throw new Error("stork route requires a stork trigger");
-    }
-    return this.encodeInstructionDiscriminator("execute_order_if_ready_stork");
   }
 
   private encodeInstructionDiscriminator(ixName: string): Buffer {
@@ -235,7 +313,7 @@ export class OrderExecutorClient {
       const orderId = cursor.readU64();
       cursor.readU64(); // input_amount (unused by keeper)
       const trigger = this.readTrigger(cursor);
-      const action = this.readCpiAction(cursor);
+      const action = this.readOrderAction(cursor);
       cursor.readU64(); // created_slot (unused by keeper)
       const expiresFlag = cursor.readU8();
       const expiresSlot = expiresFlag === 1 ? cursor.readU64() : null;
@@ -298,21 +376,44 @@ export class OrderExecutorClient {
     }
   }
 
-  private readCpiAction(cursor: BufferCursor): CpiAction {
-    const programId = cursor.readPubkey();
-    const accountCount = cursor.readU32();
-    const accounts = Array.from({ length: accountCount }, () => ({
-      pubkey: cursor.readPubkey(),
-      isWritable: cursor.readBool(),
-    }));
-    const dataLen = cursor.readU32();
-    const ixData = cursor.readFixedBytes(dataLen);
-
-    return {
-      programId,
-      accounts,
-      data: Buffer.from(ixData),
-    };
+  private readOrderAction(cursor: BufferCursor): OrderEnvelope["action"] {
+    const variant = cursor.readU8();
+    if (variant === 0) {
+      const programId = cursor.readPubkey();
+      const accountCount = cursor.readU32();
+      const accounts = Array.from({ length: accountCount }, () => ({
+        pubkey: cursor.readPubkey(),
+        isWritable: cursor.readBool(),
+      }));
+      const dataLen = cursor.readU32();
+      const ixData = cursor.readFixedBytes(dataLen);
+      return {
+        kind: "cpi",
+        action: {
+          programId,
+          accounts,
+          data: Buffer.from(ixData),
+        },
+      };
+    }
+    if (variant === 1) {
+      const swapProgram = cursor.readPubkey();
+      const inputMint = cursor.readPubkey();
+      const outputMint = cursor.readPubkey();
+      const inputAmount = cursor.readU64();
+      const maxSlippageBps = cursor.readU16();
+      return {
+        kind: "swapIntent",
+        intent: {
+          swapProgram,
+          inputMint,
+          outputMint,
+          inputAmount,
+          maxSlippageBps,
+        },
+      };
+    }
+    throw new Error(`unknown OrderAction variant: ${variant}`);
   }
 }
 
@@ -330,6 +431,13 @@ class BufferCursor {
 
   readBool(): boolean {
     return this.readU8() === 1;
+  }
+
+  readU16(): number {
+    this.ensure(2);
+    const value = this.buffer.readUInt16LE(this.offset);
+    this.offset += 2;
+    return value;
   }
 
   readU32(): number {

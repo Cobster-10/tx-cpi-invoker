@@ -2,6 +2,22 @@ import { PublicKey } from "@solana/web3.js";
 
 export type KeeperRoute = "base" | "stork";
 
+/**
+ * Payload needed to build the Stork update_temporal_numeric_value_evm instruction.
+ * Passed from priceUpdateToSnapshot through FeedSnapshot → ExecutionCandidate → TxBuilder.
+ */
+export type StorkPushPayload = {
+  feedId: Uint8Array;
+  quantizedValue: bigint;
+  timestampNs: bigint;
+  publisherMerkleRoot: Uint8Array;
+  valueComputeAlgHash: Uint8Array;
+  signatureR: Uint8Array;
+  signatureS: Uint8Array;
+  signatureV: number;
+  treasuryId: number;
+};
+
 export type Trigger =
   | { kind: "time_after"; slot: bigint }
   | { kind: "pda_value_equals"; account: PublicKey; expectedValue: bigint }
@@ -30,13 +46,25 @@ export type CpiAction = {
   data: Buffer;
 };
 
+export type SwapIntent = {
+  swapProgram: PublicKey;
+  inputMint: PublicKey;
+  outputMint: PublicKey;
+  inputAmount: bigint;
+  maxSlippageBps: number;
+};
+
+export type OrderAction =
+  | { kind: "cpi"; action: CpiAction }
+  | { kind: "swapIntent"; intent: SwapIntent };
+
 export type OrderEnvelope = {
   orderPubkey: PublicKey;
   vaultPubkey?: PublicKey;
   orderId: bigint;
   user: PublicKey;
   trigger: Trigger;
-  action: CpiAction;
+  action: OrderAction;
   expiresSlot: bigint | null;
   executed: boolean;
   canceled: boolean;
@@ -49,18 +77,13 @@ export type SignedUpdatePayload = {
   data: Buffer;
 };
 
-export type FeedSnapshot = {
-  feedId: Uint8Array;
-  quantizedValue: bigint;
-  timestampNs: bigint;
-  signedUpdatePayload?: SignedUpdatePayload;
-};
-
 export type ExecutionCandidate = {
   orderPubkey: PublicKey;
   route: KeeperRoute;
   reason: string;
   feedId?: Uint8Array;
+  /** When present, the keeper should prepend the Stork update instruction before execute_order_if_ready_stork. */
+  storkPushPayload?: StorkPushPayload;
 };
 
 export type ExecutionResult = {
@@ -70,4 +93,3 @@ export type ExecutionResult = {
   errorCode?: string;
 };
 
-//hi
